@@ -7,7 +7,7 @@ from tqdm import tqdm
 import csv
 
 # Configuration
-MODEL_NAME = "your-llama-3.2-1b-model"
+MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
 BATCH_SIZE = 1
 MAX_NEW_TOKENS = 1024
 TEMPERATURE = 0.7
@@ -15,7 +15,7 @@ TOP_P = 1.0
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DEBUG = False  # Set to True to enable debug prints
 
 # Simple question prompt
@@ -94,11 +94,11 @@ def main():
     test_dataset = dataset['test']
 
     # Load model
-    model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B-Instruct", torch_dtype=torch.float16, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, torch_dtype=torch.float16, device_map="auto").to(DEVICE)
     model.eval()
 
     # Create a pipeline for reasoning tasks
-    pipe = pipeline("text-generation", model="meta-llama/Llama-3.2-1B-Instruct")
+    pipe = pipeline("text-generation", model="meta-llama/Llama-3.2-1B-Instruct", device=0 if DEVICE == "mps" else -1)
 
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
@@ -116,7 +116,7 @@ def main():
         gold_numbers = re.findall(r"[-+]?\d*\.\d+|\d+", gold_answer)
         gold_final = gold_numbers[-1].strip() if gold_numbers else None
 
-        prompt = PROMPT_TEMPLATE3.format(question=question)
+        prompt = PROMPT_TEMPLATE.format(question=question)
         # Generate answer with explicit pad_token_id
         outputs = pipe(
             prompt,
