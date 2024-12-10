@@ -29,7 +29,14 @@ pip install -r requirements.txt
    Install the necessary Python packages:
 
    ```bash
-   pip install -r requirements.txt
+   #!/bin/bash
+
+# Create and activate environment
+conda create --name study_project_env python=3.10 -y
+source activate study_project_env
+
+# Install requirements
+pip install -r requirements.txt
    ```
 
 3. **Run the Experiment:**
