@@ -12,11 +12,6 @@ This is a study project for Humboldt University of Berlin focused on experimenti
 Ensure you have Python installed. You can install the required packages using:
 
 ```bash
-# Create and activate environment
-conda create --name study_project_env python=3.10 -y
-source activate study_project_env
-
-# Install requirements
 pip install -r requirements.txt
 ```
 
