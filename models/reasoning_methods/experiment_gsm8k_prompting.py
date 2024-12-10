@@ -98,7 +98,7 @@ def main():
     model.eval()
 
     # Create a pipeline for reasoning tasks
-    pipe = pipeline("text-generation", model="meta-llama/Llama-3.2-1B-Instruct", device=0 if DEVICE == "mps" else -1)
+    pipe = pipeline("text-generation", model="meta-llama/Llama-3.2-1B-Instruct", device=0 if DEVICE == "cuda" else -1)
 
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
