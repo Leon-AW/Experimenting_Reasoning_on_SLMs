@@ -19,7 +19,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is
 DEBUG = False  # Set to True to enable debug prints
 
 # Simple question prompt
-PROMPT_TEMPLATE = """Question: {question}
+PROMPT_TEMPLATE = """Solve the following Question.
+Question: {question}
 """
 
 # Generic prompt template
@@ -52,6 +53,12 @@ PROMPT_TEMPLATE3 = """Question: {question}
 
     Your Reasoning: """
 
+PROMPT_TEMPLATES = {
+    "PROMPT_TEMPLATE": PROMPT_TEMPLATE,
+    "PROMPT_TEMPLATE1": PROMPT_TEMPLATE1,
+    "PROMPT_TEMPLATE2": PROMPT_TEMPLATE2,
+    "PROMPT_TEMPLATE3": PROMPT_TEMPLATE3
+}
 
 def extract_numeric_answer(generated_text):
     """
@@ -103,86 +110,76 @@ def main():
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
 
-    # Evaluate with progress bar
-    correct = 0
-    total = 0
-    results = []  # To store results for CSV
+    for template_name, prompt_template in PROMPT_TEMPLATES.items():
+        correct = 0
+        total = 0
+        results = []  # To store results for CSV
 
-    for example in tqdm(test_dataset, desc="Processing examples"):
-        question = example["question"]
-        gold_answer = example["answer"].strip()
+        for example in tqdm(test_dataset, desc=f"Processing examples with {template_name}"):
+            question = example["question"]
+            gold_answer = example["answer"].strip()
 
-        # Extract the final numeric answer from the gold answer
-        gold_numbers = re.findall(r"[-+]?\d*\.\d+|\d+", gold_answer)
-        gold_final = gold_numbers[-1].strip() if gold_numbers else None
+            # Extract the final numeric answer from the gold answer
+            gold_numbers = re.findall(r"[-+]?\d*\.\d+|\d+", gold_answer)
+            gold_final = gold_numbers[-1].strip() if gold_numbers else None
 
-        prompt = PROMPT_TEMPLATE.format(question=question)
-        # Generate answer with explicit pad_token_id
-        outputs = pipe(
-            prompt,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            top_k=TOP_K,
-            do_sample=DO_SAMPLE,
-            num_return_sequences=NUM_RETURN_SEQUENCES,
-            pad_token_id=eos_token_id  # Explicitly set pad_token_id
-        )
-        generated_text = outputs[0]["generated_text"]
-        pred_answer = extract_numeric_answer(generated_text)
-        
-        # Print details of the prediction if debugging is enabled
-        if DEBUG:
-            print(f"Question: {question}")
-            print(f"Generated Text: {generated_text}")
-            print(f"Extracted Answer: {pred_answer}")
-            print(f"Gold Answer: {gold_final}")
-        
-        # Compare prediction to gold_final
-        is_correct = False
-        if pred_answer is not None and gold_final is not None:
-            try:
-                pred_num = float(pred_answer.replace(",", ""))
-                gold_num = float(gold_final.replace(",", ""))
-                if abs(pred_num - gold_num) < 1e-7:
-                    correct += 1
-                    is_correct = True
-            except ValueError:
-                pass
+            prompt = prompt_template.format(question=question)
+            outputs = pipe(
+                prompt,
+                max_new_tokens=MAX_NEW_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                top_k=TOP_K,
+                do_sample=DO_SAMPLE,
+                num_return_sequences=NUM_RETURN_SEQUENCES,
+                pad_token_id=eos_token_id
+            )
+            generated_text = outputs[0]["generated_text"]
+            pred_answer = extract_numeric_answer(generated_text)
 
-        if DEBUG:
-            print(f"Result: {'Correct' if is_correct else 'Incorrect'}\n")
-        
-        total += 1
+            # Compare prediction to gold_final
+            is_correct = False
+            if pred_answer is not None and gold_final is not None:
+                try:
+                    pred_num = float(pred_answer.replace(",", ""))
+                    gold_num = float(gold_final.replace(",", ""))
+                    if abs(pred_num - gold_num) < 1e-7:
+                        correct += 1
+                        is_correct = True
+                except ValueError:
+                    pass
 
-        if total % 10 == 0:
-            print(f"Processed {total} examples. Current Accuracy: {correct/total:.2%}")
+            total += 1
 
-        # Store the result for CSV
-        results.append({
-            "question": question,
-            "prompt": prompt,
-            "generated_text": generated_text,
-            "pred_answer": pred_answer,
-            "gold_answer": gold_final,
-            "is_correct": is_correct
-        })
+            # Store the result for CSV
+            results.append({
+                "question": question,
+                "prompt": prompt,
+                "generated_text": generated_text,
+                "pred_answer": pred_answer,
+                "gold_answer": gold_final,
+                "is_correct": is_correct
+            })
 
-    final_accuracy = correct / total if total > 0 else 0.0
-    print(f"Final Accuracy on GSM8K test set: {final_accuracy:.2%}")
+        final_accuracy = correct / total if total > 0 else 0.0
+        print(f"Final Accuracy of {template_name} on GSM8K test set: {final_accuracy:.2%}")
+        print(f"Total Correct Answers: {correct}/{total} Questions")
 
-    # Print the total number of correct answers
-    print(f"Total Correct Answers: {correct}")
+        # Ensure the results directory exists
+        os.makedirs('results', exist_ok=True)
 
-    # Ensure the results directory exists
-    os.makedirs('results', exist_ok=True)
+        # Save results to CSV
+        csv_file_path = os.path.join('results', f'{template_name}_results.csv')
+        with open(csv_file_path, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=["question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
+            writer.writeheader()
+            writer.writerows(results)
 
-    # Save results to CSV in the specified directory
-    csv_file_path = os.path.join('results', 'gsm8k_prompting_results.csv')
-    with open(csv_file_path, mode='w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=["question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
-        writer.writeheader()
-        writer.writerows(results)
+        # Save accuracy to a text file
+        txt_file_path = os.path.join('results', f'{template_name}_total_accuracy.txt')
+        with open(txt_file_path, mode='w') as file:
+            file.write(f"Final Accuracy of {template_name} on GSM8K test set: {final_accuracy:.2%}\n")
+            file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
 
 if __name__ == "__main__":
     main()
