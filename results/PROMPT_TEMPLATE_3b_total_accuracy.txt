@@ -1,0 +1,2 @@
+Final Accuracy of PROMPT_TEMPLATE on GSM8K test set: 32.15%
+Total Correct Answers: 424/1319 Questions

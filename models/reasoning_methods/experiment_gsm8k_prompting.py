@@ -7,7 +7,7 @@ from tqdm import tqdm
 import csv
 
 # Configuration
-MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
+MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 1
 MAX_NEW_TOKENS = 1024
 TEMPERATURE = 0.7
@@ -169,14 +169,14 @@ def main():
         os.makedirs('results', exist_ok=True)
 
         # Save results to CSV
-        csv_file_path = os.path.join('results', f'{template_name}_results.csv')
+        csv_file_path = os.path.join('results', f'{template_name}_3b_results.csv')
         with open(csv_file_path, mode='w', newline='') as file:
             writer = csv.DictWriter(file, fieldnames=["question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
             writer.writeheader()
             writer.writerows(results)
 
         # Save accuracy to a text file
-        txt_file_path = os.path.join('results', f'{template_name}_total_accuracy.txt')
+        txt_file_path = os.path.join('results', f'{template_name}_3b_total_accuracy.txt')
         with open(txt_file_path, mode='w') as file:
             file.write(f"Final Accuracy of {template_name} on GSM8K test set: {final_accuracy:.2%}\n")
             file.write(f"Total Correct Answers: {correct}/{total} Questions\n")

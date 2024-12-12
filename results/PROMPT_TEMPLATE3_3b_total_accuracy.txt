@@ -1,0 +1,2 @@
+Final Accuracy of PROMPT_TEMPLATE3 on GSM8K test set: 30.86%
+Total Correct Answers: 407/1319 Questions
