@@ -20,19 +20,19 @@ DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is
 DEBUG = True  # Set to True to enable debug prints
 
 # Simple question prompt
-PROMPT_TEMPLATE = """Solve the following problem, then conclude it with 'The final answer is X' without any formatting or special characters.\n\nProblem: {question}\n\nAnswer: """
+PROMPT_TEMPLATE = """Solve the following problem, then conclude it with 'The final answer is: <insert your answer here>' without any formatting or special characters.\n\nProblem: {question}\n\nAnswer: """
 
 # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-PROMPT_TEMPLATE1 = """Solve the following problem step-by-step, then conclude it with 'The final answer is X' without any formatting or special characters.\n\nProblem: {question}\n\nLet's think step by step:\n
+PROMPT_TEMPLATE1 = """Solve the following problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>' without any formatting or special characters.\n\nProblem: {question}\n\nLet's think step by step:\n
 """
 
 # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
 PROMPT_TEMPLATE2 = """From now on, you are an excellent teacher and are teaching your students to get a new word by concatenating the last
-letters of several words. I am one of your students and want to ask you a related question.\nFinally conclude your answer with 'The final answer is X' without any formatting or special characters. \n\Question: {question}\n"""
+letters of several words. I am one of your students and want to ask you a related question.\nFinally conclude your answer with 'The final answer is: <insert your answer here>' without any formatting or special characters. \n\Question: {question}\n"""
 
 # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
 PROMPT_TEMPLATE3 = """Let's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables (pay attention to correct numeral calculation and commonsense), solve the problem step by step, and show the answer. 
-\n\nFinally conclude your answer with 'The final answer is X' without any formatting or special characters.\n\n Question: {question}\n"""
+\n\nFinally conclude your answer with 'The final answer is: <insert your answer here>' without any formatting or special characters.\n\n Question: {question}\n"""
 
 
 
@@ -48,8 +48,9 @@ def extract_numeric_answer(generated_text):
     ]
     
     for pattern in final_answer_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
+        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
+        if matches:
+            match = matches[-1]  # Take the last match
             clean_number = match.group(1).replace(',', '').replace('$', '').replace('\\', '').strip()
             try:
                 return clean_number
@@ -59,12 +60,14 @@ def extract_numeric_answer(generated_text):
     # Look for "Answer:" or "Answer is:" followed by a number
     answer_patterns = [
         r"[Aa]nswer(?:\s+is)?:\s*=\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match number after equals sign
-        r"[Aa]nswer(?:\s+is)?:\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*"  # Match first number after Answer:
+        r"[Aa]nswer(?:\s+is)?:\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match first number after Answer:
+        r"[Aa]nswer(?:\s*[^=\n]*)?=\s*[^=\n]*?(\d[\d,]*(?:\.\d+)?)\s*$"  # Match final number in equation after Answer:
     ]
     
     for pattern in answer_patterns:
-        match = re.search(pattern, generated_text)  # Removed re.IGNORECASE since we handle case in pattern
-        if match:
+        matches = list(re.finditer(pattern, generated_text))  # Removed re.IGNORECASE since we handle case in pattern
+        if matches:
+            match = matches[-1]  # Take the last match
             clean_number = match.group(1).replace(',', '').replace('$', '')
             try:
                 return clean_number
@@ -78,8 +81,9 @@ def extract_numeric_answer(generated_text):
     ]
     
     for pattern in other_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
+        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
+        if matches:
+            match = matches[-1]  # Take the last match
             clean_number = match.group(1).replace(',', '').replace('$', '')
             try:
                 return clean_number
@@ -103,7 +107,7 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(SEED)
     if torch.backends.mps.is_available():
-        torch.manual_seed(SEED)  # MPS doesn't have a separate seed function
+        torch.manual_seed(SEED)
 
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
