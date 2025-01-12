@@ -9,36 +9,36 @@ import csv
 # Configuration
 MODEL_NAME = "meta-llama/Llama-3.2-1B"
 BATCH_SIZE = 1
-MAX_NEW_TOKENS = 1024
-TEMPERATURE = 0.7
+MAX_NEW_TOKENS = 512
+TEMPERATURE = 0.5
 SEED = 42
-TOP_P = 1.0
+TOP_P = 0.95
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-DEBUG = True  # Set to True to enable debug prints
+DEBUG = False  # Set to True to enable debug prints
 
 # Simple question prompt
-PROMPT_TEMPLATE = """Solve the following problem, then conclude it with 'The final answer is: <insert your answer here>' without any formatting or special characters.\n\nProblem: {question}\n\nAnswer: """
+PROMPT_TEMPLATE = """Problem: {question}\n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'.\n\nAnswer: """
 
 # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-PROMPT_TEMPLATE1 = """Solve the following problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>' without any formatting or special characters.\n\nProblem: {question}\n\nLet's think step by step:\n
+PROMPT_TEMPLATE1 = """Problem: {question}\n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'.\n\nLet's think step by step: 
 """
 
 # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
-PROMPT_TEMPLATE2 = """From now on, you are an excellent teacher and are teaching your students to get a new word by concatenating the last
-letters of several words. I am one of your students and want to ask you a related question.\nFinally conclude your answer with 'The final answer is: <insert your answer here>' without any formatting or special characters. \n\Question: {question}\n"""
+PROMPT_TEMPLATE2 = """From now on, you are an excellent teacher. One of your students and wants to ask you a question.\nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
+\n\Question: {question}\n\nAnswer: """
 
 # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
-PROMPT_TEMPLATE3 = """Let's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables (pay attention to correct numeral calculation and commonsense), solve the problem step by step, and show the answer. 
-\n\nFinally conclude your answer with 'The final answer is: <insert your answer here>' without any formatting or special characters.\n\n Question: {question}\n"""
+PROMPT_TEMPLATE3 = """Problem: {question}\n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step, and show the answer. 
+\n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'.\n\nAnswer: """
 
 
 
 def extract_numeric_answer(generated_text):
     """
-    Extract numeric answer from generated text.
+    Extract numeric answer from generated text and round up at x.5 or higher, otherwise round down.
     """
     # First try to find "The final answer is" pattern
     final_answer_patterns = [
@@ -53,7 +53,7 @@ def extract_numeric_answer(generated_text):
             match = matches[-1]  # Take the last match
             clean_number = match.group(1).replace(',', '').replace('$', '').replace('\\', '').strip()
             try:
-                return clean_number
+                return str(int(float(clean_number) + 0.5))
             except ValueError:
                 continue
 
@@ -70,7 +70,7 @@ def extract_numeric_answer(generated_text):
             match = matches[-1]  # Take the last match
             clean_number = match.group(1).replace(',', '').replace('$', '')
             try:
-                return clean_number
+                return str(int(float(clean_number) + 0.5))
             except ValueError:
                 continue
 
@@ -86,7 +86,7 @@ def extract_numeric_answer(generated_text):
             match = matches[-1]  # Take the last match
             clean_number = match.group(1).replace(',', '').replace('$', '')
             try:
-                return clean_number
+                return str(int(float(clean_number) + 0.5))
             except ValueError:
                 continue
 
@@ -95,7 +95,7 @@ def extract_numeric_answer(generated_text):
     if numbers:
         clean_number = numbers[-1].replace(',', '').replace('$', '')
         try:
-            return clean_number
+            return str(int(float(clean_number) + 0.5))
         except ValueError:
             pass
 
