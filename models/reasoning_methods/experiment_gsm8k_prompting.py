@@ -7,50 +7,33 @@ from tqdm import tqdm
 import csv
 
 # Configuration
-MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"
+MODEL_NAME = "meta-llama/Llama-3.2-1B"
 BATCH_SIZE = 1
 MAX_NEW_TOKENS = 1024
 TEMPERATURE = 0.7
+SEED = 42
 TOP_P = 1.0
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-DEBUG = False  # Set to True to enable debug prints
+DEBUG = True  # Set to True to enable debug prints
 
 # Simple question prompt
-PROMPT_TEMPLATE = """Question: {question}
+PROMPT_TEMPLATE = """Solve the following problem, then conclude it with 'The final answer is X' without any formatting or special characters.\n\nProblem: {question}\n\nAnswer: """
+
+# Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
+PROMPT_TEMPLATE1 = """Solve the following problem step-by-step, then conclude it with 'The final answer is X' without any formatting or special characters.\n\nProblem: {question}\n\nLet's think step by step:\n
 """
 
-# Generic prompt template
-PROMPT_TEMPLATE1 = """You are a helpful and accurate reasoning assistant. Solve the following math problem step-by-step, then conclude with 'The final answer is X' without any formatting or special characters.\n\nProblem: {question}\n\nStep-by-step reasoning:\n
-"""
+# Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
+PROMPT_TEMPLATE2 = """From now on, you are an excellent teacher and are teaching your students to get a new word by concatenating the last
+letters of several words. I am one of your students and want to ask you a related question.\nFinally conclude your answer with 'The final answer is X' without any formatting or special characters. \n\Question: {question}\n"""
 
-# More detailed general reasoning prompt
-PROMPT_TEMPLATE2 = """Question: {question}
+# Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
+PROMPT_TEMPLATE3 = """Let's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables (pay attention to correct numeral calculation and commonsense), solve the problem step by step, and show the answer. 
+\n\nFinally conclude your answer with 'The final answer is X' without any formatting or special characters.\n\n Question: {question}\n"""
 
-    Let's solve this step by step:
-    1. First, let's understand what the question is asking
-    2. Break down the problem into smaller parts
-    3. Solve each part systematically
-    4. Double check our calculations
-    5. Combine the results to get our final answer
-    6. The final answer is: [your answer] (without any formatting or special characters)
-
-    Your Reasoning: """
-
-# 2 More detailed general reasoning prompt
-PROMPT_TEMPLATE3 = """Question: {question}
-
-    Let's solve this problem step by step:
-    1. First, understand the problem and clarify what the question is asking.
-    2. Break the problem into smaller, manageable parts or sub-problems.
-    3. Solve each sub-problem systematically, providing clear reasoning for each step.
-    4. Review and verify the calculations and logic to ensure accuracy.
-    5. Combine the results from each step to determine the final answer.
-    6. The final answer is: [your answer] (without any formatting or special characters)
-
-    Your Reasoning: """
 
 
 def extract_numeric_answer(generated_text):
@@ -58,37 +41,73 @@ def extract_numeric_answer(generated_text):
     Extract numeric answer from generated text.
     """
     # First try to find "The final answer is" pattern
-    pattern = r"(?:The final answer is|Answer:)\s*\$?([\d,]+(?:\.\d+)?)"
-    match = re.search(pattern, generated_text, re.IGNORECASE)
-    if match:
-        clean_number = match.group(1).replace(',', '').replace('$', '')
-        try:
-            return str(int(float(clean_number)))
-        except ValueError:
-            return clean_number
+    final_answer_patterns = [
+        r"The final answer is:?\s*\$?\\?\s*(?:boxed{)?(\d[\d,]*(?:\.\d+)?)}?",  # Matches LaTeX \boxed{} and similar
+        r"The final answer is:?\s*\$?([\d,]+(?:\.\d+)?)",  # Regular number pattern
+        r"The final answer is:?\s*\$?\s*(?:is\s+)?(\d[\d,]*(?:\.\d+)?)",  # More flexible pattern
+    ]
+    
+    for pattern in final_answer_patterns:
+        match = re.search(pattern, generated_text, re.IGNORECASE)
+        if match:
+            clean_number = match.group(1).replace(',', '').replace('$', '').replace('\\', '').strip()
+            try:
+                return clean_number
+            except ValueError:
+                continue
 
-    # If not found, look for any number after a dollar sign
-    pattern = r"\$\s*([\d,]+(?:\.\d+)?)"
-    numbers = re.findall(pattern, generated_text)
-    if numbers:
-        clean_number = numbers[-1].replace(',', '')
-        try:
-            return str(int(float(clean_number)))
-        except ValueError:
-            return clean_number
+    # Look for "Answer:" or "Answer is:" followed by a number
+    answer_patterns = [
+        r"[Aa]nswer(?:\s+is)?:\s*=\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match number after equals sign
+        r"[Aa]nswer(?:\s+is)?:\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*"  # Match first number after Answer:
+    ]
+    
+    for pattern in answer_patterns:
+        match = re.search(pattern, generated_text)  # Removed re.IGNORECASE since we handle case in pattern
+        if match:
+            clean_number = match.group(1).replace(',', '').replace('$', '')
+            try:
+                return clean_number
+            except ValueError:
+                continue
 
-    # Last resort: find any numbers
-    numbers = re.findall(r"[\d,]+(?:\.\d+)?", generated_text)
+    # If no calculation found, try other patterns
+    other_patterns = [
+        r"(?:answer|solution)(?:\s+is)?:?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)",
+        r"=\s*(\d[\d,]*(?:\.\d+)?)\s*$",
+    ]
+    
+    for pattern in other_patterns:
+        match = re.search(pattern, generated_text, re.IGNORECASE)
+        if match:
+            clean_number = match.group(1).replace(',', '').replace('$', '')
+            try:
+                return clean_number
+            except ValueError:
+                continue
+
+    # Last resort: find the last number in the text
+    numbers = re.findall(r"\d[\d,]*(?:\.\d+)?", generated_text)
     if numbers:
-        clean_number = numbers[-1].replace(',', '')
+        clean_number = numbers[-1].replace(',', '').replace('$', '')
         try:
-            return str(int(float(clean_number)))
-        except ValueError:
             return clean_number
+        except ValueError:
+            pass
 
     return None
 
 def main():
+    # Set seed for reproducibility
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    if torch.backends.mps.is_available():
+        torch.manual_seed(SEED)  # MPS doesn't have a separate seed function
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
     # Load dataset
     dataset = load_dataset("gsm8k", "main")
     test_dataset = dataset['test']
@@ -98,7 +117,12 @@ def main():
     model.eval()
 
     # Create a pipeline for reasoning tasks
-    pipe = pipeline("text-generation", model="meta-llama/Llama-3.2-1B-Instruct", device=0 if DEVICE == "mps" else -1)
+    pipe = pipeline(
+        "text-generation", 
+        model=MODEL_NAME, 
+        device=DEVICE,
+        use_cache=True,
+    )
 
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
@@ -147,8 +171,9 @@ def main():
                 if abs(pred_num - gold_num) < 1e-7:
                     correct += 1
                     is_correct = True
-            except ValueError:
-                pass
+            except ValueError as e:
+                if DEBUG:
+                    print(f"Error converting numbers: {e}")
 
         if DEBUG:
             print(f"Result: {'Correct' if is_correct else 'Incorrect'}\n")
