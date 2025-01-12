@@ -34,7 +34,12 @@ PROMPT_TEMPLATE2 = """From now on, you are an excellent teacher. One of your stu
 PROMPT_TEMPLATE3 = """Problem: {question}\n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step, and show the answer. 
 \n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'.\n\nAnswer: """
 
-
+PROMPT_TEMPLATES = {
+    "basic": PROMPT_TEMPLATE,
+    "zero_shot": PROMPT_TEMPLATE1,
+    "role_setting": PROMPT_TEMPLATE2,
+    "plan_and_solve": PROMPT_TEMPLATE3
+}
 
 def extract_numeric_answer(generated_text):
     """
