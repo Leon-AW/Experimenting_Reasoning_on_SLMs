@@ -131,18 +131,18 @@ def main():
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
 
-    # Evaluate with progress bar
-    correct = 0
-    total = 0
-    results = []  # To store results for CSV
+    for template_name, prompt_template in PROMPT_TEMPLATES.items():
+        correct = 0
+        total = 0
+        results = []  # To store results for CSV
 
-    for example in tqdm(test_dataset, desc="Processing examples"):
-        question = example["question"]
-        gold_answer = example["answer"].strip()
+        for example in tqdm(test_dataset, desc=f"Processing examples with {template_name}"):
+            question = example["question"]
+            gold_answer = example["answer"].strip()
 
-        # Extract the final numeric answer from the gold answer
-        gold_numbers = re.findall(r"[-+]?\d*\.\d+|\d+", gold_answer)
-        gold_final = gold_numbers[-1].strip() if gold_numbers else None
+            # Extract the final numeric answer from the gold answer
+            gold_numbers = re.findall(r"[-+]?\d*\.\d+|\d+", gold_answer)
+            gold_final = gold_numbers[-1].strip() if gold_numbers else None
 
         prompt = PROMPT_TEMPLATE.format(question=question)
         # Generate answer with explicit pad_token_id
@@ -197,21 +197,25 @@ def main():
             "is_correct": is_correct
         })
 
-    final_accuracy = correct / total if total > 0 else 0.0
-    print(f"Final Accuracy on GSM8K test set: {final_accuracy:.2%}")
+        final_accuracy = correct / total if total > 0 else 0.0
+        print(f"Final Accuracy of {template_name} on GSM8K test set: {final_accuracy:.2%}")
+        print(f"Total Correct Answers: {correct}/{total} Questions")
 
-    # Print the total number of correct answers
-    print(f"Total Correct Answers: {correct}")
+        # Ensure the results directory exists
+        os.makedirs('results', exist_ok=True)
 
-    # Ensure the results directory exists
-    os.makedirs('results', exist_ok=True)
+        # Save results to CSV
+        csv_file_path = os.path.join('results', f'{template_name}_3b_results.csv')
+        with open(csv_file_path, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=["question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
+            writer.writeheader()
+            writer.writerows(results)
 
-    # Save results to CSV in the specified directory
-    csv_file_path = os.path.join('results', 'gsm8k_prompting_results.csv')
-    with open(csv_file_path, mode='w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=["question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
-        writer.writeheader()
-        writer.writerows(results)
+        # Save accuracy to a text file
+        txt_file_path = os.path.join('results', f'{template_name}_3b_total_accuracy.txt')
+        with open(txt_file_path, mode='w') as file:
+            file.write(f"Final Accuracy of {template_name} on GSM8K test set: {final_accuracy:.2%}\n")
+            file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
 
 if __name__ == "__main__":
     main()
