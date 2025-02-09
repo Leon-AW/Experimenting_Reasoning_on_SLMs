@@ -1,0 +1,2 @@
+Final Accuracy of simple on GSM8K test set: 5.88%
+Total Correct Answers: 7/119 Questions
