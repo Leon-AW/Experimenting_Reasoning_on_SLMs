@@ -6,6 +6,7 @@ from transformers import AutoModelForCausalLM, pipeline
 from tqdm import tqdm
 import csv
 import argparse
+import time
 
 # Configuration
 BATCH_SIZE = 1
@@ -48,9 +49,9 @@ B) {options[1]}
 C) {options[2]}
 D) {options[3]}
 
-Please explain your reasoning clearly and conclude your answer with 'The answer is: <A/B/C/D>'.
+Explain your answer to the student and conclude it with 'The answer is: <A/B/C/D>'.
 
-Answer: """
+Teacher: """
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
@@ -67,11 +68,9 @@ D) {options[3]}
 Let's approach this systematically:
 1. First, let's understand the question
 2. Then, analyze each option carefully
-3. Finally, choose the most appropriate answer
+3. Finally, choose the most appropriate answer and conclude it with 'The answer is: <A/B/C/D>'.
 
-Please conclude your answer with 'The answer is: <A/B/C/D>'.
-
-Answer: """
+"""
     }
 }
 
@@ -490,93 +489,122 @@ def main():
             total = 0
             results = []
             
-            # Load dataset
-            dataset = load_dataset(dataset_config["name"], dataset_config["split"])
-            if dataset_config["subset"]:
-                dataset = dataset[dataset_config["subset"]]
+            # Load dataset with error handling and retries
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    dataset = load_dataset(dataset_config["name"], dataset_config["split"])
+                    if dataset_config["subset"]:
+                        dataset = dataset[dataset_config["subset"]]
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        print(f"Failed to load dataset after {max_retries} attempts: {str(e)}")
+                        raise
+                    print(f"Attempt {attempt + 1} failed, retrying...")
+                    time.sleep(5)  # Wait 5 seconds before retrying
 
             # Limit to the first 1000 samples
             dataset = dataset.select(range(min(1000, len(dataset))))
 
             for example in tqdm(dataset, desc=f"Processing {template_name}"):
-                question = example[dataset_config["question_key"]]
-                gold_answer = str(example[dataset_config["answer_key"]]).strip()
-                
-                # Extract options for multiple choice questions
-                options = None
-                passage = None
-                if args.dataset == "race":
-                    options = example["options"]
-                    passage = example["article"]  # Use 'article' as the key for the passage
-                elif args.dataset == "arc":
-                    options = [example["choices"]["text"][i] for i in range(4)]
-                elif args.dataset == "mmlu":
-                    options = [example[f"choice_{i}"] for i in range(4)]
-                elif args.dataset == "agieval":
-                    options = example.get("options", [])  # AGIEval might have different structure
-                
-                # Format prompt with appropriate template and options
-                prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                
-                outputs = pipe(
-                    prompt,
-                    min_new_tokens=MIN_NEW_TOKENS, 
-                    max_new_tokens=MAX_NEW_TOKENS,
-                    temperature=TEMPERATURE,
-                    top_p=TOP_P,
-                    top_k=TOP_K,
-                    do_sample=DO_SAMPLE,
-                    num_return_sequences=NUM_RETURN_SEQUENCES,
-                    pad_token_id=eos_token_id
-                )
-                
-                generated_text = outputs[0]["generated_text"]
-                pred_answer = get_answer_extractor(args.dataset)(generated_text)
-                
-                # Print details of the prediction if debugging is enabled
-                if args.debug:
+                try:
+                    question = example[dataset_config["question_key"]]
+                    gold_answer = str(example[dataset_config["answer_key"]]).strip()
+                    
+                    # Extract options with error handling
+                    options = None
+                    passage = None
                     if args.dataset == "race":
-                        print(f"Passage: {passage}")
-                    print(f"Generated Text: {generated_text}")
-                    print(f"Extracted Answer: {pred_answer}")
-                    print(f"Gold Answer: {gold_answer}")
-                
-                # Compare prediction to gold_answer
-                is_correct = False
-                if pred_answer is not None and gold_answer is not None:
-                    if args.dataset in ["gsm8k", "drop"]:
-                        # For numeric answers
-                        try:
-                            pred_num = float(pred_answer.replace(',', ''))
-                            gold_num = float(gold_answer.replace(',', ''))
-                            is_correct = abs(pred_num - gold_num) < 1e-7
-                        except ValueError as e:
-                            if args.debug:
-                                print(f"Error converting numbers: {e}")
-                    else:
-                        # For multiple choice answers (A, B, C, D)
-                        is_correct = pred_answer.upper() == gold_answer.upper()
-                
-                if is_correct:
-                    correct += 1
-                
-                if args.debug:
-                    print(f"Result: {'Correct' if is_correct else 'Incorrect'}\n")
-                
-                total += 1
+                        options = example.get("options", [])
+                        passage = example.get("article", "")
+                    elif args.dataset == "arc":
+                        choices = example.get("choices", {})
+                        if isinstance(choices, dict) and "text" in choices:
+                            options = choices["text"][:4]  # Ensure we only get 4 options
+                        else:
+                            print(f"Skipping example due to invalid choices format: {choices}")
+                            continue
+                    elif args.dataset == "mmlu":
+                        options = [example.get(f"choice_{i}", "") for i in range(4)]
+                    elif args.dataset == "agieval":
+                        options = example.get("options", [])
+                    
+                    # Validate options
+                    if options is None or (isinstance(options, list) and len(options) < 4):
+                        print(f"Skipping example due to insufficient options: {options}")
+                        continue
+                    
+                    # Format prompt with appropriate template and options
+                    try:
+                        prompt = format_prompt(template_name, args.dataset, question, options, passage)
+                    except Exception as e:
+                        print(f"Error formatting prompt: {str(e)}")
+                        continue
 
-                if total % 10 == 0:
-                    print(f"Processed {total} examples. Current Accuracy: {correct/total:.2%}")
+                    outputs = pipe(
+                        prompt,
+                        min_new_tokens=MIN_NEW_TOKENS, 
+                        max_new_tokens=MAX_NEW_TOKENS,
+                        temperature=TEMPERATURE,
+                        top_p=TOP_P,
+                        top_k=TOP_K,
+                        do_sample=DO_SAMPLE,
+                        num_return_sequences=NUM_RETURN_SEQUENCES,
+                        pad_token_id=eos_token_id
+                    )
+                    
+                    generated_text = outputs[0]["generated_text"]
+                    pred_answer = get_answer_extractor(args.dataset)(generated_text)
+                    
+                    # Print details of the prediction if debugging is enabled
+                    if args.debug:
+                        if args.dataset == "race":
+                            print(f"Passage: {passage}")
+                        print(f"Generated Text: {generated_text}")
+                        print(f"Extracted Answer: {pred_answer}")
+                        print(f"Gold Answer: {gold_answer}")
+                    
+                    # Compare prediction to gold_answer
+                    is_correct = False
+                    if pred_answer is not None and gold_answer is not None:
+                        if args.dataset in ["gsm8k", "drop"]:
+                            # For numeric answers
+                            try:
+                                pred_num = float(pred_answer.replace(',', ''))
+                                gold_num = float(gold_answer.replace(',', ''))
+                                is_correct = abs(pred_num - gold_num) < 1e-7
+                            except ValueError as e:
+                                if args.debug:
+                                    print(f"Error converting numbers: {e}")
+                        else:
+                            # For multiple choice answers (A, B, C, D)
+                            is_correct = pred_answer.upper() == gold_answer.upper()
+                    
+                    if is_correct:
+                        correct += 1
+                    
+                    if args.debug:
+                        print(f"Result: {'Correct' if is_correct else 'Incorrect'}\n")
+                    
+                    total += 1
 
-                # Store the result for CSV
-                results.append({
-                    "question": question,
-                    "prompt": prompt,
-                    "generated_text": generated_text,
-                    "pred_answer": pred_answer,
-                    "gold_answer": gold_answer,
-                    "is_correct": is_correct
-                })
+                    if total % 10 == 0:
+                        print(f"Processed {total} examples. Current Accuracy: {correct/total:.2%}")
+
+                    # Store the result for CSV
+                    results.append({
+                        "question": question,
+                        "prompt": prompt,
+                        "generated_text": generated_text,
+                        "pred_answer": pred_answer,
+                        "gold_answer": gold_answer,
+                        "is_correct": is_correct
+                    })
+
+                except Exception as e:
+                    print(f"Error processing example: {str(e)}")
+                    continue
 
             final_accuracy = correct / total if total > 0 else 0.0
             print(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}")
