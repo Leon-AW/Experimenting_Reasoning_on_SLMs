@@ -14,7 +14,7 @@ MIN_NEW_TOKENS = 1
 MAX_NEW_TOKENS = 512
 TEMPERATURE = 0.5
 SEED = 42
-TOP_P = 0.95
+TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
@@ -23,18 +23,18 @@ DEBUG = True  # Set to True to enable debug prints
 
 # Define prompt templates as a dictionary
 PROMPT_TEMPLATES = {
-#    # Simple question prompt
-#     "simple": {
-#         "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
-#         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
-#     },
-#     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-#     "chain": {
-#         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-#         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
+   # Simple question prompt
+    "simple": {
+        "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
+    },
+    # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
+    "chain": {
+        "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
 
-# Let's solve this step-by-step: """
-#     },
+Let's solve this step-by-step: """
+    },
     # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
     "role": {
         "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
@@ -295,35 +295,44 @@ def extract_multiple_choice_answer(generated_text):
     # Get the answer section
     answer_section = answer_text.strip()
     
-    # First try to find explicit letter answers
+    # Enhanced letter patterns with better prioritization
     letter_patterns = [
-        r"The (?:correct )?answer is[:\s]\s*([A-D])",
-        r"(?:Option|Choice)[:\s]\s*([A-D])",
-        r"([A-D])\s*is (?:the )?correct",
-        r"Answer:\s*([A-D])\b",
-        r"I (?:choose|select)\s*([A-D])",
-        r"\b([A-D])\b(?=[^a-z]*$)",
-        r"\d([A-D])",  # Number followed by letter - capture only the letter
+        # Explicit "The correct answer is" patterns (highest priority)
+        r"The correct answer is ['\"]*([A-D])['\"]*",  # New pattern for quoted answers
+        r"The (?:correct )?answer is:?\s*([A-D])\b",
+        r"The (?:correct )?answer is:?\s*(?:option|choice)?\s*([A-D])\b",
+        
+        # Clear statement patterns
+        r"(?:Therefore|Thus|Hence|So),?\s+(?:the\s+)?(?:answer|choice|option)\s+is\s+([A-D])\b",
+        r"(?:I\s+)?conclude\s+(?:that\s+)?(?:the\s+)?(?:answer|choice|option)\s+is\s+([A-D])\b",
+        
+        # Other explicit patterns
+        r"(?:Option|Choice)[:\s]\s*([A-D])\b",
+        r"([A-D])\s*is\s+(?:the\s+)?correct\b",
+        r"(?:select|choose|pick)\s+(?:option|choice)?\s*([A-D])\b",
+        
+        # Last line patterns (only if it's a single letter)
+        r"^([A-D])$",  # Exact single letter on its own line
+        r"^(?:Option|Choice)?\s*([A-D])$",  # Single letter with possible prefix
+        
+        # Fallback patterns (lowest priority)
+        r"\b([A-D])\b(?=[^a-z]*$)",  # Letter at the end
+        r"(?:answer|option|choice)\s*=\s*([A-D])\b"
     ]
     
+    # First try explicit letter patterns
     for pattern in letter_patterns:
-        match = re.search(pattern, answer_section, re.IGNORECASE)
-        if match:
-            return match.group(1).upper()
+        matches = list(re.finditer(pattern, answer_section, re.IGNORECASE))
+        if matches:
+            # Take the last match if multiple exist
+            return matches[-1].group(1).upper()
     
-    # If no direct letter found, try to match the answer
+    # If no direct letter found, try content matching
     if answer_section:
-        # Clean up the answer for comparison
-        clean_answer = answer_section.strip()
-        normalized_answer = re.sub(r'[^\w\s]', '', clean_answer.lower()).strip()
-        
         # Special handling for chemical equations
-        if '->' in clean_answer or '→' in clean_answer:
-            # Normalize the chemical equation in the answer
-            chemical_answer = clean_answer.replace(" ", "")
-            chemical_answer = re.sub(r'[{}_]', '', chemical_answer)  # Remove subscript/superscript markers
-            
-            # Try to match with chemical equation options
+        if '->' in answer_section or '→' in answer_section:
+            chemical_answer = answer_section.replace(" ", "")
+            chemical_answer = re.sub(r'[{}_]', '', chemical_answer)
             for letter in options:
                 if letter.endswith('_chem'):
                     continue
@@ -331,7 +340,7 @@ def extract_multiple_choice_answer(generated_text):
                     return letter
         
         # Try to extract numeric value from answer
-        num_match = re.search(r'(?:^|[^\d,])(\d+(?:,\d+)?)', clean_answer.replace(" ", ""))
+        num_match = re.search(r'(?:^|[^\d,])(\d+(?:,\d+)?)', answer_section.replace(" ", ""))
         if num_match:
             # Convert answer string to number, handling commas
             answer_num = int(num_match.group(1).replace(",", ""))
@@ -342,17 +351,20 @@ def extract_multiple_choice_answer(generated_text):
                     if options[letter] == answer_num:
                         return letter[0]
         
-        # Try normalized text match
+        # Clean answer for text comparison
+        normalized_answer = re.sub(r'[^\w\s]', '', answer_section.lower()).strip()
+        
+        # Try exact normalized match first
         for letter in options:
             if letter.endswith('_chem') or letter.endswith('_num') or letter.endswith('_norm'):
                 continue
             if normalized_answer == options[f"{letter}_norm"]:
                 return letter
         
-        # Try partial match with minimum length requirement
-        min_match_length = 3
+        # Only try partial matching if no exact matches found
         best_match = None
         best_match_length = 0
+        min_match_length = 5  # Increased minimum length for partial matches
         
         for letter in options:
             if letter.endswith('_chem') or letter.endswith('_num') or letter.endswith('_norm'):
@@ -372,6 +384,7 @@ def extract_multiple_choice_answer(generated_text):
         if best_match:
             return best_match
     
+    # If no match found, return None instead of defaulting
     return None
 
 def extract_mmlu_answer(generated_text):
