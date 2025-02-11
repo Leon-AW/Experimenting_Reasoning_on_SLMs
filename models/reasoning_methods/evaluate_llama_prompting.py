@@ -23,18 +23,18 @@ DEBUG = True  # Set to True to enable debug prints
 
 # Define prompt templates as a dictionary
 PROMPT_TEMPLATES = {
-   # Simple question prompt
-    "simple": {
-        "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\nA) {options[0]}\nB) {options[1]}\nC) {options[2]}\nD) {options[3]}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
-    },
-    # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-    "chain": {
-        "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\nA) {options[0]}\nB) {options[1]}\nC) {options[2]}\nD) {options[3]}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
+#    # Simple question prompt
+#     "simple": {
+#         "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+#         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
+#     },
+#     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
+#     "chain": {
+#         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
+#         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
 
-Let's solve this step-by-step: """
-    },
+# Let's solve this step-by-step: """
+#     },
     # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
     "role": {
         "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
@@ -44,14 +44,11 @@ Let's solve this step-by-step: """
 Question: {question}
 
 Options:
-A) {options[0]}
-B) {options[1]}
-C) {options[2]}
-D) {options[3]}
+{options}
 
-Explain your answer to the student and conclude it with 'The answer is: <A/B/C/D>'.
+Explain what the correct answer is and conclude it with 'The answer is: <A/B/C/D>'.
 
-Teacher: """
+"""
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
@@ -60,10 +57,7 @@ Teacher: """
         "multiple_choice": """Question: {question}
 
 Options:
-A) {options[0]}
-B) {options[1]}
-C) {options[2]}
-D) {options[3]}
+{options}
 
 Let's approach this systematically:
 1. First, let's understand the question
@@ -244,8 +238,7 @@ def extract_arc_answer(generated_text):
 
 def extract_multiple_choice_answer(generated_text):
     """
-    Extract multiple choice answers from any multiple choice dataset responses (RACE, ARC, MMLU, AGIEval).
-    Handles both direct letter answers and full text answers.
+    Extract multiple choice answers from any multiple choice dataset responses.
     """
     # First check if the model actually generated any reasoning past the prompt
     parts = generated_text.split("Options:")
@@ -254,13 +247,23 @@ def extract_multiple_choice_answer(generated_text):
     
     options_and_answer = parts[1]
     
-    # Try to split on either "Answer:" or "Let's solve this step-by-step:"
-    if "Answer:" in options_and_answer:
-        options_text, answer_text = options_and_answer.split("Answer:", 1)
-    elif "Let's solve this step-by-step:" in options_and_answer:
-        options_text, answer_text = options_and_answer.split("Let's solve this step-by-step:", 1)
+    # Try to split on various possible delimiters
+    delimiters = [
+        "Answer:", 
+        "Let's solve this step-by-step:",
+        "Solution:",
+        "Therefore,",
+        "Thus,",
+        "So,",
+        "In conclusion,"
+    ]
+    
+    for delimiter in delimiters:
+        if delimiter in options_and_answer:
+            options_text, answer_text = options_and_answer.split(delimiter, 1)
+            break
     else:
-        # If neither delimiter is found, use the entire text after options
+        # If no delimiter found, use the entire text after options
         options_text = options_and_answer
         answer_text = options_and_answer
 
@@ -270,26 +273,37 @@ def extract_multiple_choice_answer(generated_text):
         match = re.match(r'([A-D])\)(.*)', line.strip())
         if match:
             letter, text = match.groups()
-            options[letter.upper()] = text.strip()
-            # Also store normalized version (lowercase, no punctuation, no extra spaces)
-            options[f"{letter.upper()}_norm"] = re.sub(r'[^\w\s]', '', text.lower()).strip()
+            letter = letter.upper()
+            text = text.strip()
+            options[letter] = text
+            
+            # Store normalized text version (for general text matching)
+            options[f"{letter}_norm"] = re.sub(r'[^\w\s]', '', text.lower()).strip()
+            
+            # Store chemical equation version (removing spaces and normalizing)
+            chemical_text = text.replace(" ", "")
+            chemical_text = re.sub(r'[{}_]', '', chemical_text)  # Remove subscript/superscript markers
+            options[f"{letter}_chem"] = chemical_text
+            
+            # Try to extract numeric value if present
+            num_match = re.search(r'(?:^|[^\d,])(\d+(?:,\d+)?)', text.replace(" ", ""))
+            if num_match:
+                # Convert string to number, handling commas
+                num_str = num_match.group(1).replace(",", "")
+                options[f"{letter}_num"] = int(num_str)
     
-    # First try to find explicit letter answers in the model's direct response
+    # Get the answer section
     answer_section = answer_text.strip()
     
-    # Check for single letter answer at the start
-    if answer_section and len(answer_section) >= 1 and answer_section[0] in "ABCD":
-        return answer_section[0].upper()
-    
-    # Look for explicit letter answers with common patterns
+    # First try to find explicit letter answers
     letter_patterns = [
-        r"^([A-D])[.\s]*$",  # Just the letter with optional period/space
         r"The (?:correct )?answer is[:\s]\s*([A-D])",
         r"(?:Option|Choice)[:\s]\s*([A-D])",
         r"([A-D])\s*is (?:the )?correct",
         r"Answer:\s*([A-D])\b",
         r"I (?:choose|select)\s*([A-D])",
-        r"\b([A-D])\b(?=[^a-z]*$)"  # Letter at the end of response
+        r"\b([A-D])\b(?=[^a-z]*$)",
+        r"\d([A-D])",  # Number followed by letter - capture only the letter
     ]
     
     for pattern in letter_patterns:
@@ -297,43 +311,67 @@ def extract_multiple_choice_answer(generated_text):
         if match:
             return match.group(1).upper()
     
-    # If no direct letter found, try to match the content
+    # If no direct letter found, try to match the answer
     if answer_section:
-        # Normalize the model's answer
-        normalized_answer = re.sub(r'[^\w\s]', '', answer_section.lower()).strip()
+        # Clean up the answer for comparison
+        clean_answer = answer_section.strip()
+        normalized_answer = re.sub(r'[^\w\s]', '', clean_answer.lower()).strip()
         
-        # Try exact match first
-        for letter, text in options.items():
-            if letter.endswith('_norm'):
+        # Special handling for chemical equations
+        if '->' in clean_answer or '→' in clean_answer:
+            # Normalize the chemical equation in the answer
+            chemical_answer = clean_answer.replace(" ", "")
+            chemical_answer = re.sub(r'[{}_]', '', chemical_answer)  # Remove subscript/superscript markers
+            
+            # Try to match with chemical equation options
+            for letter in options:
+                if letter.endswith('_chem'):
+                    continue
+                if chemical_answer == options[f"{letter}_chem"]:
+                    return letter
+        
+        # Try to extract numeric value from answer
+        num_match = re.search(r'(?:^|[^\d,])(\d+(?:,\d+)?)', clean_answer.replace(" ", ""))
+        if num_match:
+            # Convert answer string to number, handling commas
+            answer_num = int(num_match.group(1).replace(",", ""))
+            
+            # Look for exact numeric matches
+            for letter in options:
+                if letter.endswith('_num'):
+                    if options[letter] == answer_num:
+                        return letter[0]
+        
+        # Try normalized text match
+        for letter in options:
+            if letter.endswith('_chem') or letter.endswith('_num') or letter.endswith('_norm'):
                 continue
-            if normalized_answer == text.lower():
+            if normalized_answer == options[f"{letter}_norm"]:
                 return letter
         
-        # Try partial match
-        for letter, text in options.items():
-            if letter.endswith('_norm'):
-                continue
-            # Convert both strings to numbers if possible (for temperature comparisons)
-            answer_num = re.search(r'(\d+)', normalized_answer)
-            option_num = re.search(r'(\d+)', text.lower())
-            if answer_num and option_num and answer_num.group(1) == option_num.group(1):
-                return letter
+        # Try partial match with minimum length requirement
+        min_match_length = 3
+        best_match = None
+        best_match_length = 0
         
-        # Try normalized match as last resort
-        for letter, text in options.items():
-            if not letter.endswith('_norm'):
+        for letter in options:
+            if letter.endswith('_chem') or letter.endswith('_num') or letter.endswith('_norm'):
                 continue
-            if normalized_answer in text or text in normalized_answer:
-                return letter[0]  # Remove _norm suffix
+            norm_text = options[f"{letter}_norm"]
+            
+            # Check both directions of containment
+            if len(norm_text) >= min_match_length and norm_text in normalized_answer:
+                if len(norm_text) > best_match_length:
+                    best_match = letter
+                    best_match_length = len(norm_text)
+            elif len(normalized_answer) >= min_match_length and normalized_answer in norm_text:
+                if len(normalized_answer) > best_match_length:
+                    best_match = letter
+                    best_match_length = len(normalized_answer)
+        
+        if best_match:
+            return best_match
     
-    # Final fallback: Look for any letter A-D in the last few lines
-    last_lines = answer_section.strip().split('\n')[-3:]
-    for line in reversed(last_lines):
-        match = re.search(r'\b([A-D])\b', line)
-        if match:
-            return match.group(1).upper()
-    
-    # Return None if no answer found
     return None
 
 def extract_mmlu_answer(generated_text):
@@ -420,21 +458,32 @@ def get_prompt_template(template_name, dataset_name):
     template_type = "numeric" if dataset_name in numeric_datasets else "multiple_choice"
     return PROMPT_TEMPLATES[template_name][template_type]
 
-def format_prompt(template_name, dataset_name, question, options=None, passage=None):
-    """
-    Format the prompt with the appropriate template and options if needed
-    """
-    template = get_prompt_template(template_name, dataset_name)
-    if dataset_name in ["gsm8k", "drop"]:
-        return template.format(question=question)
-    elif dataset_name == "race":
-        if not options or not passage:
-            raise ValueError(f"Options and passage are required for RACE dataset")
-        return f"Passage: {passage}\n\n" + template.format(question=question, options=options)
+def format_prompt(template_name, dataset_type, question, options=None, passage=None):
+    """Format prompt according to template and dataset type."""
+    
+    # Get the correct template
+    if dataset_type in ["race", "arc", "mmlu", "agieval"]:
+        template = PROMPT_TEMPLATES[template_name]["multiple_choice"]
     else:
-        if not options:
-            raise ValueError(f"Options are required for multiple choice dataset {dataset_name}")
-        return template.format(question=question, options=options)
+        template = PROMPT_TEMPLATES[template_name]["numeric"]
+    
+    # Format options if present
+    formatted_options = ""
+    if options:
+        if isinstance(options, list):
+            for i, opt in enumerate(options):
+                formatted_options += f"{chr(65+i)}) {opt}\n"
+        elif isinstance(options, dict):
+            for letter, text in sorted(options.items()):
+                formatted_options += f"{letter}) {text}\n"
+    
+    # Format the prompt using the template
+    if passage:
+        # For datasets with passages (like RACE)
+        return template.format(question=question, options=formatted_options, passage=passage)
+    else:
+        # For datasets without passages
+        return template.format(question=question, options=formatted_options)
 
 def main():
     # Add argument parsing
@@ -483,32 +532,44 @@ def main():
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
 
-    for template_name, prompt_template in PROMPT_TEMPLATES.items():
+    print(f"\nStarting evaluation with templates: {list(PROMPT_TEMPLATES.keys())}")
+    
+    # Load dataset with error handling and retries
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            dataset = load_dataset(dataset_config["name"], dataset_config["split"])
+            if dataset_config["subset"]:
+                dataset = dataset[dataset_config["subset"]]
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"Failed to load dataset after {max_retries} attempts: {str(e)}")
+                raise
+            print(f"Attempt {attempt + 1} failed, retrying...")
+            time.sleep(5)
+
+    # Process each prompt template
+    for template_name in PROMPT_TEMPLATES.keys():
+        print(f"\n{'='*50}")
+        print(f"Starting template: {template_name}")
+        print(f"{'='*50}\n")
+        
         try:
             correct = 0
             total = 0
             results = []
+            processed_count = 0
+            dataset_index = 0
+            unextracted_answers = []  # Track indices where answer extraction failed
             
-            # Load dataset with error handling and retries
-            max_retries = 3
-            for attempt in range(max_retries):
+            # Process samples until we get 1000 valid ones
+            pbar = tqdm(total=1000, desc=f"Processing {template_name}")
+            while processed_count < 1000 and dataset_index < len(dataset):
                 try:
-                    dataset = load_dataset(dataset_config["name"], dataset_config["split"])
-                    if dataset_config["subset"]:
-                        dataset = dataset[dataset_config["subset"]]
-                    break
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        print(f"Failed to load dataset after {max_retries} attempts: {str(e)}")
-                        raise
-                    print(f"Attempt {attempt + 1} failed, retrying...")
-                    time.sleep(5)  # Wait 5 seconds before retrying
-
-            # Limit to the first 1000 samples
-            dataset = dataset.select(range(min(1000, len(dataset))))
-
-            for example in tqdm(dataset, desc=f"Processing {template_name}"):
-                try:
+                    example = dataset[dataset_index]
+                    dataset_index += 1
+                    
                     question = example[dataset_config["question_key"]]
                     gold_answer = str(example[dataset_config["answer_key"]]).strip()
                     
@@ -521,29 +582,19 @@ def main():
                     elif args.dataset == "arc":
                         choices = example.get("choices", {})
                         if isinstance(choices, dict) and "text" in choices:
-                            options = choices["text"][:4]  # Ensure we only get 4 options
+                            options = choices["text"]
                         else:
-                            print(f"Skipping example due to invalid choices format: {choices}")
                             continue
                     elif args.dataset == "mmlu":
-                        options = [example.get(f"choice_{i}", "") for i in range(4)]
+                        options = [example.get(f"choice_{i}", "") for i in range(4) if example.get(f"choice_{i}")]
                     elif args.dataset == "agieval":
                         options = example.get("options", [])
-                    
-                    # Validate options
-                    if options is None or (isinstance(options, list) and len(options) < 4):
-                        print(f"Skipping example due to insufficient options: {options}")
-                        continue
-                    
-                    # Format prompt with appropriate template and options
-                    try:
-                        prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                    except Exception as e:
-                        print(f"Error formatting prompt: {str(e)}")
-                        continue
 
+                    # Format prompt with template
+                    formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+                    
                     outputs = pipe(
-                        prompt,
+                        formatted_prompt,
                         min_new_tokens=MIN_NEW_TOKENS, 
                         max_new_tokens=MAX_NEW_TOKENS,
                         temperature=TEMPERATURE,
@@ -556,6 +607,13 @@ def main():
                     
                     generated_text = outputs[0]["generated_text"]
                     pred_answer = get_answer_extractor(args.dataset)(generated_text)
+                    
+                    # Track unextracted answers
+                    if pred_answer is None:
+                        unextracted_answers.append(dataset_index - 1)  # -1 because we already incremented
+                    
+                    # Extract only the model's response by removing the prompt
+                    model_response = generated_text[len(formatted_prompt):].strip()
                     
                     # Print details of the prediction if debugging is enabled
                     if args.debug:
@@ -589,46 +647,68 @@ def main():
                     
                     total += 1
 
-                    if total % 10 == 0:
+                    if total % 50 == 0:
                         print(f"Processed {total} examples. Current Accuracy: {correct/total:.2%}")
 
-                    # Store the result for CSV
+                    # Store results with sample index
                     results.append({
+                        "sample_index": dataset_index - 1,  # Add sample index to results
                         "question": question,
-                        "prompt": prompt,
-                        "generated_text": generated_text,
+                        "prompt": formatted_prompt,
+                        "generated_text": model_response,
                         "pred_answer": pred_answer,
                         "gold_answer": gold_answer,
                         "is_correct": is_correct
                     })
 
-                except Exception as e:
-                    print(f"Error processing example: {str(e)}")
-                    continue
+                    processed_count += 1
+                    pbar.update(1)
+                    
+                    if processed_count >= 1000:
+                        print(f"\nCompleted {processed_count} samples for {template_name}")
+                        break
 
+                except Exception as e:
+                    print(f"Error processing example {dataset_index} with template {template_name}: {str(e)}")
+                    continue  # Continue to next example on error
+
+            pbar.close()
+
+            # Save results for this template
             final_accuracy = correct / total if total > 0 else 0.0
             print(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}")
             print(f"Total Correct Answers: {correct}/{total} Questions")
 
-            # Save results
+            # Save results to files
             os.makedirs('results', exist_ok=True)
             
-            # Save to CSV
+            # Save to CSV with sample index
             csv_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}_results.csv')
             with open(csv_file_path, mode='w', newline='') as file:
-                writer = csv.DictWriter(file, fieldnames=["question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
+                writer = csv.DictWriter(file, fieldnames=["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
                 writer.writeheader()
                 writer.writerows(results)
 
-            # Save accuracy
+            # Save accuracy and unextracted answers info
             txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}_total_accuracy.txt')
             with open(txt_file_path, mode='w') as file:
                 file.write(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}\n")
                 file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
+                file.write(f"\nUnextracted Answers: {len(unextracted_answers)} samples\n")
+                if unextracted_answers:
+                    file.write("Sample indices with unextracted answers:\n")
+                    file.write(", ".join(map(str, unextracted_answers)))
+                    file.write("\n")
+
+            print(f"\nCompleted template: {template_name}")
+            print(f"Moving to next template...")
 
         except Exception as e:
-            print(f"Error processing dataset {args.dataset}: {str(e)}")
-            continue
+            print(f"Error processing template {template_name}: {str(e)}")
+            print("Moving to next template...")
+            continue  # Continue to next template on error
+
+    print("\nCompleted all templates!")
 
 if __name__ == "__main__":
     main()
