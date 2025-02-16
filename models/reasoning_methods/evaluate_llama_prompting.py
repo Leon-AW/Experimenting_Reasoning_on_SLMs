@@ -7,11 +7,12 @@ from tqdm import tqdm
 import csv
 import argparse
 import time
+from collections import Counter
 
 # Configuration
 BATCH_SIZE = 1
 MIN_NEW_TOKENS = 1
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 256
 TEMPERATURE = 0.5
 SEED = 42
 TOP_P = 0.9
@@ -20,21 +21,22 @@ DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DEBUG = True  # Set to True to enable debug prints
+SELF_CONSISTENCY_PATHS = 15  # Reduced from paper's 40 to 15 paths
 
 # Define prompt templates as a dictionary
 PROMPT_TEMPLATES = {
    # Simple question prompt
-    "simple": {
-        "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
-    },
-#     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-#     "chain": {
-#         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-#         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
+    # "simple": {
+    #     "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+    #     "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
+    # },
+    # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
+    "chain": {
+        "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
 
-# Let's solve this step-by-step: """
-#     },
+Let's solve this step-by-step: """
+    },
     # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
     "role": {
         "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
@@ -509,6 +511,8 @@ def main():
     parser.add_argument('--model_size', type=str, default='3b',
                        choices=['1b', '3b'],
                        help='LLaMA model size (1b or 3b)')
+    parser.add_argument('--self_consistency', action='store_true',
+                       help='Enable self-consistency with 15 paths')
     args = parser.parse_args()
 
     # Set model name based on size parameter
@@ -606,35 +610,106 @@ def main():
                     # Format prompt with template
                     formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                     
-                    outputs = pipe(
-                        formatted_prompt,
-                        min_new_tokens=MIN_NEW_TOKENS, 
-                        max_new_tokens=MAX_NEW_TOKENS,
-                        temperature=TEMPERATURE,
-                        top_p=TOP_P,
-                        top_k=TOP_K,
-                        do_sample=DO_SAMPLE,
-                        num_return_sequences=NUM_RETURN_SEQUENCES,
-                        pad_token_id=eos_token_id
-                    )
-                    
-                    generated_text = outputs[0]["generated_text"]
-                    pred_answer = get_answer_extractor(args.dataset)(generated_text)
+                    if args.self_consistency:
+                        try:
+                            # Self-consistency mode: generate multiple paths
+                            outputs = pipe(
+                                formatted_prompt,
+                                min_new_tokens=MIN_NEW_TOKENS,
+                                max_new_tokens=MAX_NEW_TOKENS,
+                                temperature=TEMPERATURE,
+                                top_p=TOP_P,
+                                top_k=TOP_K,
+                                do_sample=True,  # Force sampling for diversity
+                                num_return_sequences=SELF_CONSISTENCY_PATHS,
+                                pad_token_id=eos_token_id
+                            )
+                            
+                            # Extract answers from all paths
+                            answers = []
+                            model_responses = []
+                            
+                            if args.debug:
+                                print(f"\nGenerated {len(outputs)} paths")
+                                print(f"Output structure: {type(outputs)}")
+                                print(f"First output: {outputs[0] if outputs else 'No outputs'}")
+                            
+                            for output in outputs:
+                                try:
+                                    # Handle different output structures
+                                    if isinstance(output, dict):
+                                        generated_text = output.get("generated_text", "")
+                                    elif isinstance(output, list) and len(output) > 0:
+                                        generated_text = output[0].get("generated_text", "")
+                                    else:
+                                        generated_text = str(output)
+                                    
+                                    if generated_text:
+                                        model_response = generated_text[len(formatted_prompt):].strip()
+                                        model_responses.append(model_response)
+                                        answer = get_answer_extractor(args.dataset)(generated_text)
+                                        if answer is not None:
+                                            answers.append(str(answer).upper())
+                                            
+                                    if args.debug:
+                                        print(f"\nPath generated text: {generated_text}")
+                                        print(f"Extracted answer: {answer}")
+                                except Exception as e:
+                                    if args.debug:
+                                        print(f"Error processing output: {str(e)}")
+                                    continue
+                            
+                            # Majority vote with tiebreaker
+                            if answers:
+                                counts = Counter(answers)
+                                max_count = max(counts.values())
+                                candidates = [k for k,v in counts.items() if v == max_count]
+                                pred_answer = candidates[0] if candidates else None
+                                if args.debug:
+                                    print(f"\nAll answers: {answers}")
+                                    print(f"Selected answer: {pred_answer}")
+                                    print(f"Gold answer: {gold_answer}")
+                            else:
+                                pred_answer = None
+                            
+                            # Store all responses for debugging
+                            model_response = "\n".join(model_responses)
+                            
+                        except Exception as e:
+                            print(f"Error in self-consistency processing: {str(e)}")
+                            pred_answer = None
+                            model_response = ""
+                    else:
+                        # Original single-path mode
+                        try:
+                            outputs = pipe(
+                                formatted_prompt,
+                                min_new_tokens=MIN_NEW_TOKENS,
+                                max_new_tokens=MAX_NEW_TOKENS,
+                                temperature=TEMPERATURE,
+                                top_p=TOP_P,
+                                top_k=TOP_K,
+                                do_sample=DO_SAMPLE,
+                                num_return_sequences=1,
+                                pad_token_id=eos_token_id
+                            )
+                            
+                            if isinstance(outputs, list) and len(outputs) > 0:
+                                generated_text = outputs[0].get("generated_text", "")
+                            else:
+                                generated_text = str(outputs)
+                                
+                            model_response = generated_text[len(formatted_prompt):].strip()
+                            pred_answer = get_answer_extractor(args.dataset)(generated_text)
+                            
+                        except Exception as e:
+                            print(f"Error in single-path processing: {str(e)}")
+                            pred_answer = None
+                            model_response = ""
                     
                     # Track unextracted answers
                     if pred_answer is None:
                         unextracted_answers.append(dataset_index - 1)  # -1 because we already incremented
-                    
-                    # Extract only the model's response by removing the prompt
-                    model_response = generated_text[len(formatted_prompt):].strip()
-                    
-                    # Print details of the prediction if debugging is enabled
-                    if args.debug:
-                        if args.dataset == "race":
-                            print(f"Passage: {passage}")
-                        print(f"Generated Text: {generated_text}")
-                        print(f"Extracted Answer: {pred_answer}")
-                        print(f"Gold Answer: {gold_answer}")
                     
                     # Compare prediction to gold_answer
                     is_correct = False
