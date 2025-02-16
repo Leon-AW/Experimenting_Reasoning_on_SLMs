@@ -1,4 +1,4 @@
-Final Accuracy of chain on race: 12.80%
-Total Correct Answers: 128/1000 Questions
+Final Accuracy of chain on race: 16.70%
+Total Correct Answers: 167/1000 Questions
 
 Unextracted Answers: 0 samples

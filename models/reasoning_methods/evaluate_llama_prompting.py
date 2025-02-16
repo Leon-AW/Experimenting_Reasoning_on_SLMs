@@ -321,7 +321,7 @@ def extract_multiple_choice_answer(generated_text):
         # Fallback patterns (lowest priority)
         r"\b([A-D])\b(?=[^a-z]*$)",  # Letter at the end
         r"(?:answer|option|choice)\s*=\s*([A-D])\b"
-        immediate answer followed by newline and explanation
+        # immediate answer followed by newline and explanation
         r"^\s*([A-D])\s*(?:\n|$)",  # Matches single letter at start followed by newline
     ]
     
