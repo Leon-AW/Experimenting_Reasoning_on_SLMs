@@ -28,13 +28,13 @@ PROMPT_TEMPLATES = {
         "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
     },
-    # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-    "chain": {
-        "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
+#     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
+#     "chain": {
+#         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
+#         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
 
-Let's solve this step-by-step: """
-    },
+# Let's solve this step-by-step: """
+#     },
     # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
     "role": {
         "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
@@ -666,7 +666,6 @@ def main():
                     # Store results with sample index
                     results.append({
                         "sample_index": dataset_index - 1,  # Add sample index to results
-                        "question": question,
                         "prompt": formatted_prompt,
                         "generated_text": model_response,
                         "pred_answer": pred_answer,
