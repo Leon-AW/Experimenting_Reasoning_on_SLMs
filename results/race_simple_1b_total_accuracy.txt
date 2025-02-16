@@ -1,4 +1,4 @@
-Final Accuracy of simple on race: 0.00%
-Total Correct Answers: 0/0 Questions
+Final Accuracy of simple on race: 26.80%
+Total Correct Answers: 268/1000 Questions
 
 Unextracted Answers: 0 samples
