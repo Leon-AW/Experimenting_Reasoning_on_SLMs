@@ -1,8 +1,8 @@
 import os
 import re
 import torch
-from datasets import load_dataset
-from transformers import AutoModelForCausalLM, pipeline
+from datasets import load_dataset, Dataset
+from transformers import AutoModelForCausalLM, pipeline, AutoTokenizer
 from tqdm import tqdm
 import csv
 import argparse
@@ -10,13 +10,15 @@ import time
 from collections import Counter
 
 # Configuration
-BATCH_SIZE = 1
+BATCH_SIZE = 32
+NUM_GPUS = 3
+MAX_MEMORY = "40GB"
 MIN_NEW_TOKENS = 1
 MAX_NEW_TOKENS = 256
-TEMPERATURE = 0.5
+TEMPERATURE = 0.7
 SEED = 42
 TOP_P = 0.9
-TOP_K = 0
+TOP_K = 40
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -26,10 +28,10 @@ SELF_CONSISTENCY_PATHS = 15  # Reduced from paper's 40 to 15 paths
 # Define prompt templates as a dictionary
 PROMPT_TEMPLATES = {
    # Simple question prompt
-    # "simple": {
-    #     "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
-    #     "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
-    # },
+    "simple": {
+        "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
+    },
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
     "chain": {
         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
@@ -329,15 +331,16 @@ def extract_multiple_choice_answer(generated_text):
             # Take the last match if multiple exist
             return matches[-1].group(1).upper()
     
+    # Get base option keys (A-D only)
+    base_keys = [k for k in options if len(k) == 1 and k in "ABCD"]
+    
     # If no direct letter found, try content matching
     if answer_section:
         # Special handling for chemical equations
         if '->' in answer_section or '→' in answer_section:
             chemical_answer = answer_section.replace(" ", "")
             chemical_answer = re.sub(r'[{}_]', '', chemical_answer)
-            for letter in options:
-                if letter.endswith('_chem'):
-                    continue
+            for letter in base_keys:
                 if chemical_answer == options[f"{letter}_chem"]:
                     return letter
         
@@ -348,18 +351,15 @@ def extract_multiple_choice_answer(generated_text):
             answer_num = int(num_match.group(1).replace(",", ""))
             
             # Look for exact numeric matches
-            for letter in options:
-                if letter.endswith('_num'):
-                    if options[letter] == answer_num:
-                        return letter[0]
+            for letter in base_keys:
+                if f"{letter}_num" in options and options[f"{letter}_num"] == answer_num:
+                    return letter
         
         # Clean answer for text comparison
         normalized_answer = re.sub(r'[^\w\s]', '', answer_section.lower()).strip()
         
         # Try exact normalized match first
-        for letter in options:
-            if letter.endswith('_chem') or letter.endswith('_num') or letter.endswith('_norm'):
-                continue
+        for letter in base_keys:
             if normalized_answer == options[f"{letter}_norm"]:
                 return letter
         
@@ -368,9 +368,7 @@ def extract_multiple_choice_answer(generated_text):
         best_match_length = 0
         min_match_length = 5  # Increased minimum length for partial matches
         
-        for letter in options:
-            if letter.endswith('_chem') or letter.endswith('_num') or letter.endswith('_norm'):
-                continue
+        for letter in base_keys:
             norm_text = options[f"{letter}_norm"]
             
             # Check both directions of containment
@@ -500,6 +498,152 @@ def format_prompt(template_name, dataset_type, question, options=None, passage=N
         # For datasets without passages
         return template.format(question=question, options=formatted_options)
 
+def process_dataset_batch(pipe, dataset, template_name, args):
+    """Process dataset using batched inference with HF Dataset API"""
+    if args.debug:
+        print("Debug mode is ON in process_dataset_batch")
+
+    correct = 0
+    total = 0
+    results = []
+    
+    for batch_idx in tqdm(range(0, min(1000, len(dataset))), desc=f"Processing {template_name}"):
+        try:
+            example = dataset[batch_idx]
+            question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
+            gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+            
+            # Extract options with error handling
+            options = None
+            passage = None
+            if args.dataset == "race":
+                options = example.get("options", [])
+                passage = example.get("article", "")
+            elif args.dataset == "arc":
+                choices = example.get("choices", {})
+                if isinstance(choices, dict) and "text" in choices:
+                    options = choices["text"]
+                else:
+                    continue
+            elif args.dataset == "mmlu":
+                options = [example.get(f"choice_{i}", "") for i in range(4) if example.get(f"choice_{i}")]
+            elif args.dataset == "agieval":
+                options = example.get("options", [])
+
+            # Format prompt with template
+            formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+            
+            if args.self_consistency:
+                try:
+                    # Generate multiple paths
+                    outputs = pipe(
+                        formatted_prompt,
+                        min_new_tokens=MIN_NEW_TOKENS,
+                        max_new_tokens=MAX_NEW_TOKENS,
+                        temperature=TEMPERATURE,
+                        top_p=TOP_P,
+                        top_k=TOP_K,
+                        do_sample=True,
+                        num_return_sequences=SELF_CONSISTENCY_PATHS,
+                        pad_token_id=pipe.tokenizer.eos_token_id
+                    )
+                    
+                    # Extract answers from all paths
+                    answers = []
+                    model_responses = []
+                    
+                    if args.debug:
+                        print(f"\nGenerated {len(outputs)} paths")
+                        print(f"Output structure: {type(outputs)}")
+                        print(f"First output: {outputs[0] if outputs else 'No outputs'}")
+                    
+                    for output in outputs:
+                        try:
+                            generated_text = output.get("generated_text", "") if isinstance(output, dict) else str(output)
+                            if generated_text:
+                                model_response = generated_text[len(formatted_prompt):].strip()
+                                model_responses.append(model_response)
+                                answer = get_answer_extractor(args.dataset)(generated_text)
+                                if answer is not None:
+                                    answers.append(str(answer).upper())
+                                
+                                if args.debug:
+                                    print(f"\nPath generated text: {generated_text}")
+                                    print(f"Extracted answer: {answer}")
+                        except Exception as e:
+                            if args.debug:
+                                print(f"Error processing output: {str(e)}")
+                            continue
+                    
+                    # Majority vote
+                    pred_answer = None
+                    if answers:
+                        counts = Counter(answers)
+                        max_count = max(counts.values())
+                        candidates = [k for k,v in counts.items() if v == max_count]
+                        pred_answer = candidates[0] if candidates else None
+                        
+                        if args.debug:
+                            print(f"\nAll answers: {answers}")
+                            print(f"Selected answer: {pred_answer}")
+                            print(f"Gold answer: {gold_answer}")
+                    
+                    model_response = "\n".join(model_responses)
+                    
+                except Exception as e:
+                    if args.debug:
+                        print(f"Error in self-consistency processing: {str(e)}")
+                    continue
+            else:
+                # Single path processing
+                try:
+                    output = pipe(formatted_prompt, **generation_kwargs)[0]
+                    generated_text = output.get("generated_text", "")
+                    model_response = generated_text[len(formatted_prompt):].strip()
+                    pred_answer = get_answer_extractor(args.dataset)(generated_text)
+                except Exception as e:
+                    if args.debug:
+                        print(f"Error in single-path processing: {str(e)}")
+                    continue
+            
+            # Compare prediction to gold answer
+            is_correct = False
+            if pred_answer is not None and gold_answer is not None:
+                if args.dataset in ["gsm8k", "drop"]:
+                    try:
+                        pred_num = float(pred_answer.replace(',', ''))
+                        gold_num = float(gold_answer.replace(',', ''))
+                        is_correct = abs(pred_num - gold_num) < 1e-7
+                    except ValueError as e:
+                        if args.debug:
+                            print(f"Error converting numbers: {e}")
+                else:
+                    is_correct = pred_answer.upper() == gold_answer.upper()
+            
+            if is_correct:
+                correct += 1
+            total += 1
+            
+            if args.debug:
+                print(f"Result: {'Correct' if is_correct else 'Incorrect'}\n")
+            
+            results.append({
+                "sample_index": batch_idx,
+                "question": question,
+                "prompt": formatted_prompt,
+                "generated_text": model_response,
+                "pred_answer": pred_answer,
+                "gold_answer": gold_answer,
+                "is_correct": is_correct
+            })
+            
+        except Exception as e:
+            if args.debug:
+                print(f"Error processing example {batch_idx}: {str(e)}")
+            continue
+    
+    return correct, total, results
+
 def main():
     # Add argument parsing
     parser = argparse.ArgumentParser()
@@ -508,7 +652,7 @@ def main():
                        help='Dataset to evaluate on')
     parser.add_argument('--debug', action='store_true',
                        help='Enable debug mode')
-    parser.add_argument('--model_size', type=str, default='3b',
+    parser.add_argument('--model_size', type=str, default='1b',
                        choices=['1b', '3b'],
                        help='LLaMA model size (1b or 3b)')
     parser.add_argument('--self_consistency', action='store_true',
@@ -534,17 +678,32 @@ def main():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     
-    # Load model
-    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, torch_dtype=torch.float16, device_map="auto").to(DEVICE)
+    # Configure max memory for each GPU
+    max_memory = {i: MAX_MEMORY for i in range(NUM_GPUS)}
+    
+    # Load model with explicit memory configuration
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        torch_dtype=torch.float16,
+        device_map="auto",
+        max_memory=max_memory
+    )
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model.eval()
 
-    # Create a pipeline for reasoning tasks
+    # Create pipeline without device specification
     pipe = pipeline(
-        "text-generation", 
-        model=MODEL_NAME, 
-        device=DEVICE,
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
         use_cache=True,
+        batch_size=BATCH_SIZE * NUM_GPUS,
     )
+    
+    # Configure tokenizer
+    pipe.tokenizer.pad_token = pipe.tokenizer.eos_token
+    pipe.tokenizer.pad_token_id = pipe.tokenizer.eos_token_id
+    pipe.tokenizer.padding_side = 'left'
 
     # Get the eos_token_id from the tokenizer
     eos_token_id = pipe.tokenizer.eos_token_id
@@ -566,226 +725,39 @@ def main():
             print(f"Attempt {attempt + 1} failed, retrying...")
             time.sleep(5)
 
-    # Process each prompt template
+    # Process each prompt template using batched inference
     for template_name in PROMPT_TEMPLATES.keys():
         print(f"\n{'='*50}")
         print(f"Starting template: {template_name}")
         print(f"{'='*50}\n")
         
         try:
-            correct = 0
-            total = 0
-            results = []
-            processed_count = 0
-            dataset_index = 0
-            unextracted_answers = []  # Track indices where answer extraction failed
+            correct, total, results = process_dataset_batch(pipe, dataset, template_name, args)
             
-            # Process samples until we get 1000 valid ones
-            pbar = tqdm(total=1000, desc=f"Processing {template_name}")
-            while processed_count < 1000 and dataset_index < len(dataset):
-                try:
-                    example = dataset[dataset_index]
-                    dataset_index += 1
-                    
-                    question = example[dataset_config["question_key"]]
-                    gold_answer = str(example[dataset_config["answer_key"]]).strip()
-                    
-                    # Extract options with error handling
-                    options = None
-                    passage = None
-                    if args.dataset == "race":
-                        options = example.get("options", [])
-                        passage = example.get("article", "")
-                    elif args.dataset == "arc":
-                        choices = example.get("choices", {})
-                        if isinstance(choices, dict) and "text" in choices:
-                            options = choices["text"]
-                        else:
-                            continue
-                    elif args.dataset == "mmlu":
-                        options = [example.get(f"choice_{i}", "") for i in range(4) if example.get(f"choice_{i}")]
-                    elif args.dataset == "agieval":
-                        options = example.get("options", [])
-
-                    # Format prompt with template
-                    formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                    
-                    if args.self_consistency:
-                        try:
-                            # Self-consistency mode: generate multiple paths
-                            outputs = pipe(
-                                formatted_prompt,
-                                min_new_tokens=MIN_NEW_TOKENS,
-                                max_new_tokens=MAX_NEW_TOKENS,
-                                temperature=TEMPERATURE,
-                                top_p=TOP_P,
-                                top_k=TOP_K,
-                                do_sample=True,  # Force sampling for diversity
-                                num_return_sequences=SELF_CONSISTENCY_PATHS,
-                                pad_token_id=eos_token_id
-                            )
-                            
-                            # Extract answers from all paths
-                            answers = []
-                            model_responses = []
-                            
-                            if args.debug:
-                                print(f"\nGenerated {len(outputs)} paths")
-                                print(f"Output structure: {type(outputs)}")
-                                print(f"First output: {outputs[0] if outputs else 'No outputs'}")
-                            
-                            for output in outputs:
-                                try:
-                                    # Handle different output structures
-                                    if isinstance(output, dict):
-                                        generated_text = output.get("generated_text", "")
-                                    elif isinstance(output, list) and len(output) > 0:
-                                        generated_text = output[0].get("generated_text", "")
-                                    else:
-                                        generated_text = str(output)
-                                    
-                                    if generated_text:
-                                        model_response = generated_text[len(formatted_prompt):].strip()
-                                        model_responses.append(model_response)
-                                        answer = get_answer_extractor(args.dataset)(generated_text)
-                                        if answer is not None:
-                                            answers.append(str(answer).upper())
-                                            
-                                    if args.debug:
-                                        print(f"\nPath generated text: {generated_text}")
-                                        print(f"Extracted answer: {answer}")
-                                except Exception as e:
-                                    if args.debug:
-                                        print(f"Error processing output: {str(e)}")
-                                    continue
-                            
-                            # Majority vote with tiebreaker
-                            if answers:
-                                counts = Counter(answers)
-                                max_count = max(counts.values())
-                                candidates = [k for k,v in counts.items() if v == max_count]
-                                pred_answer = candidates[0] if candidates else None
-                                if args.debug:
-                                    print(f"\nAll answers: {answers}")
-                                    print(f"Selected answer: {pred_answer}")
-                                    print(f"Gold answer: {gold_answer}")
-                            else:
-                                pred_answer = None
-                            
-                            # Store all responses for debugging
-                            model_response = "\n".join(model_responses)
-                            
-                        except Exception as e:
-                            print(f"Error in self-consistency processing: {str(e)}")
-                            pred_answer = None
-                            model_response = ""
-                    else:
-                        # Original single-path mode
-                        try:
-                            outputs = pipe(
-                                formatted_prompt,
-                                min_new_tokens=MIN_NEW_TOKENS,
-                                max_new_tokens=MAX_NEW_TOKENS,
-                                temperature=TEMPERATURE,
-                                top_p=TOP_P,
-                                top_k=TOP_K,
-                                do_sample=DO_SAMPLE,
-                                num_return_sequences=1,
-                                pad_token_id=eos_token_id
-                            )
-                            
-                            if isinstance(outputs, list) and len(outputs) > 0:
-                                generated_text = outputs[0].get("generated_text", "")
-                            else:
-                                generated_text = str(outputs)
-                                
-                            model_response = generated_text[len(formatted_prompt):].strip()
-                            pred_answer = get_answer_extractor(args.dataset)(generated_text)
-                            
-                        except Exception as e:
-                            print(f"Error in single-path processing: {str(e)}")
-                            pred_answer = None
-                            model_response = ""
-                    
-                    # Track unextracted answers
-                    if pred_answer is None:
-                        unextracted_answers.append(dataset_index - 1)  # -1 because we already incremented
-                    
-                    # Compare prediction to gold_answer
-                    is_correct = False
-                    if pred_answer is not None and gold_answer is not None:
-                        if args.dataset in ["gsm8k", "drop"]:
-                            # For numeric answers
-                            try:
-                                pred_num = float(pred_answer.replace(',', ''))
-                                gold_num = float(gold_answer.replace(',', ''))
-                                is_correct = abs(pred_num - gold_num) < 1e-7
-                            except ValueError as e:
-                                if args.debug:
-                                    print(f"Error converting numbers: {e}")
-                        else:
-                            # For multiple choice answers (A, B, C, D)
-                            is_correct = pred_answer.upper() == gold_answer.upper()
-                    
-                    if is_correct:
-                        correct += 1
-                    
-                    if args.debug:
-                        print(f"Result: {'Correct' if is_correct else 'Incorrect'}\n")
-                    
-                    total += 1
-
-                    if total % 50 == 0:
-                        print(f"Processed {total} examples. Current Accuracy: {correct/total:.2%}")
-
-                    # Store results with sample index
-                    results.append({
-                        "sample_index": dataset_index - 1,  # Add sample index to results
-                        "prompt": formatted_prompt,
-                        "generated_text": model_response,
-                        "pred_answer": pred_answer,
-                        "gold_answer": gold_answer,
-                        "is_correct": is_correct
-                    })
-
-                    processed_count += 1
-                    pbar.update(1)
-                    
-                    if processed_count >= 1000:
-                        print(f"\nCompleted {processed_count} samples for {template_name}")
-                        break
-
-                except Exception as e:
-                    print(f"Error processing example {dataset_index} with template {template_name}: {str(e)}")
-                    continue  # Continue to next example on error
-
-            pbar.close()
-
-            # Save results for this template
+            # Save results and print metrics
             final_accuracy = correct / total if total > 0 else 0.0
             print(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}")
             print(f"Total Correct Answers: {correct}/{total} Questions")
-
+            
             # Save results to files
             os.makedirs('results', exist_ok=True)
             
             # Save to CSV with sample index
-            csv_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}_results.csv')
+            sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if args.self_consistency else ""
+            csv_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
             with open(csv_file_path, mode='w', newline='') as file:
                 writer = csv.DictWriter(file, fieldnames=["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
                 writer.writeheader()
                 writer.writerows(results)
 
             # Save accuracy and unextracted answers info
-            txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}_total_accuracy.txt')
+            txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_total_accuracy.txt')
             with open(txt_file_path, mode='w') as file:
                 file.write(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}\n")
                 file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
-                file.write(f"\nUnextracted Answers: {len(unextracted_answers)} samples\n")
-                if unextracted_answers:
-                    file.write("Sample indices with unextracted answers:\n")
-                    file.write(", ".join(map(str, unextracted_answers)))
-                    file.write("\n")
+                file.write(f"\nUnextracted Answers: {total - len(results)} samples\n")
+                if total > len(results):
+                    file.write(f"Number of unextracted answers: {total - len(results)}\n")
 
             print(f"\nCompleted template: {template_name}")
             print(f"Moving to next template...")
