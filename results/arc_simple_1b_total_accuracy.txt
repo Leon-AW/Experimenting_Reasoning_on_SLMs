@@ -1,0 +1,4 @@
+Final Accuracy of simple on arc: 23.90%
+Total Correct Answers: 239/1000 Questions
+
+Unextracted Answers: 0 samples
