@@ -6,7 +6,7 @@ import csv
 import torch
 from transformers import AutoModelForCausalLM, pipeline, AutoTokenizer
 
-from reasoning_methods.prompting.config import (
+from .config import (
     SEED, 
     DATASET_CONFIGS, 
     SELF_CONSISTENCY_PATHS, 
@@ -19,8 +19,8 @@ from reasoning_methods.prompting.config import (
     DO_SAMPLE,
     NUM_RETURN_SEQUENCES
 )
-from reasoning_methods.prompting.dataset_utils import configure_hardware, load_custom_dataset
-from reasoning_methods.prompting.evaluator import process_dataset_batch
+from .dataset_utils import configure_hardware, load_custom_dataset
+from .evaluator import process_dataset_batch
 
 
 def main():

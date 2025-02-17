@@ -280,31 +280,44 @@ def extract_mmlu_answer(generated_text):
     """
     Extract multiple choice answers from MMLU-style responses.
     Handles both letter choices and numeric choices.
+    Note: MMLU gold answers are provided as numbers (e.g. "0" means option A).
     """
-    # Look for explicit answer statements with letters
+    # Use only the part after the last "Answer:" and take just the first line to avoid extra explanation.
+    if "Answer:" in generated_text:
+        response = generated_text.split("Answer:")[-1].strip().splitlines()[0].strip()
+    else:
+        response = generated_text.strip().splitlines()[0].strip()
+    
+    # First try to find explicit numeric answers directly.
+    numeric_patterns = [
+        r"(?:[Tt]he (?:correct )?answer is[:\s]*)([0-9]+)\b",
+        r"(?:Option|Choice)[:\s]*([0-9]+)\b",
+        r"\b([0-9]+)\b\s*(?:is correct)?",
+    ]
+    for pattern in numeric_patterns:
+        match = re.search(pattern, response, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    # Next try letter patterns and convert them to numbers (A->0, B->1, etc.)
     letter_patterns = [
-        r"The (?:correct )?answer is[:\s]\s*([A-D])",
-        r"(?:Option|Choice)[:\s]\s*([A-D])",
-        r"([A-D])\s*is correct",
+        r"(?:[Tt]he (?:correct )?answer is[:\s]*)([A-D])\b",
+        r"(?:Option|Choice)[:\s]*([A-D])\b",
+        r"\b([A-D])\b\s*(?:is correct)?",
     ]
-    
     for pattern in letter_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
+        match = re.search(pattern, response, re.IGNORECASE)
         if match:
-            return match.group(1).upper()
+            letter_ans = match.group(1).upper()
+            mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+            return mapping.get(letter_ans, None)
     
-    # Look for numeric choices (1-4)
-    number_patterns = [
-        r"The (?:correct )?answer is[:\s]\s*([1-4])",
-        r"(?:Option|Choice)[:\s]\s*([1-4])",
-        r"([1-4])\s*is correct",
-    ]
-    
-    for pattern in number_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
-            # Convert numeric choice to letter (1->A, 2->B, etc.)
-            return chr(ord('A') + int(match.group(1)) - 1)
+    # Fallback: if the response is exactly a single character or a digit.
+    if response in ['A', 'B', 'C', 'D']:
+        mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+        return mapping[response]
+    if response.isdigit():
+        return response
     
     return None
 

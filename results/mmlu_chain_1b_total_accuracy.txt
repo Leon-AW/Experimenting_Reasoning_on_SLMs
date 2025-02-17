@@ -1,5 +1,5 @@
-Final Accuracy of chain on mmlu: 0.00%
-Total Correct Answers: 0/270 Questions
+Final Accuracy of chain on mmlu: 38.30%
+Total Correct Answers: 383/1000 Questions
 
 Unextracted Answers: 0 samples
 

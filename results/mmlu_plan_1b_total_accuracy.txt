@@ -1,5 +1,5 @@
-Final Accuracy of plan on mmlu: 0.00%
-Total Correct Answers: 0/270 Questions
+Final Accuracy of plan on mmlu: 41.50%
+Total Correct Answers: 415/1000 Questions
 
 Unextracted Answers: 0 samples
 

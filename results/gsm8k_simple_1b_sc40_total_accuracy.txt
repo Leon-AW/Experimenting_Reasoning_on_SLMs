@@ -1,5 +1,5 @@
-Final Accuracy of chain on arc: 28.00%
-Total Correct Answers: 280/1000 Questions
+Final Accuracy of simple on gsm8k: 6.20%
+Total Correct Answers: 62/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -16,6 +16,6 @@ Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
 Self Consistency: True
-Self Consistency Paths: 15
+Self Consistency Paths: 40
 Device: cuda
 Random Seed: 42

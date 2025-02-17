@@ -9,7 +9,7 @@ TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
-SELF_CONSISTENCY_PATHS = 15
+SELF_CONSISTENCY_PATHS = 40
 
 # Dataset configurations
 DATASET_CONFIGS = {
@@ -60,24 +60,24 @@ DATASET_CONFIGS = {
 
 # Prompt templates
 PROMPT_TEMPLATES = {
-    # Simple question prompt
+    # # Simple question prompt
     "simple": {
         "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nAnswer: """
     },
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
     "chain": {
         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.\n\nLet's solve this step-by-step: """
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nLet's solve this step-by-step: """
     },
     # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
     "role": {
         "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.\n\nQuestion: {question} \n\nAnswer: """,
-        "multiple_choice": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \n\nQuestion: {question}\n\nOptions:\n{options}\n\nExplain what the correct answer is and conclude it with 'The answer is: <A/B/C/D>'.\n\n"""
+        "multiple_choice": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \n\nQuestion: {question}\n\nOptions:\n{options}\n\n"""
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
         "numeric": """Problem: {question} \n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step, and show the answer. \n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
-        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\nLet's approach this systematically:\n1. First, let's understand the question\n2. Then, analyze each option carefully\n3. Finally, choose the most appropriate answer and conclude it with 'The answer is: <A/B/C/D>'.\n\n"""
+        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\n"""
     }
 }
