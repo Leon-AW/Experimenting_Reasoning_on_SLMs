@@ -1,0 +1,4 @@
+Final Accuracy of chain on gsm8k: 6.00%
+Total Correct Answers: 60/1000 Questions
+
+Unextracted Answers: 0 samples
