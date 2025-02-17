@@ -1,0 +1,4 @@
+Final Accuracy of simple on gsm8k: 4.60%
+Total Correct Answers: 46/1000 Questions
+
+Unextracted Answers: 0 samples

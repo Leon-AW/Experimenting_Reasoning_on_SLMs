@@ -17,8 +17,8 @@ MIN_NEW_TOKENS = 1
 MAX_NEW_TOKENS = 256
 TEMPERATURE = 0.7
 SEED = 42
-TOP_P = 0.90
-TOP_K = 40
+TOP_P = 0.9
+TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -27,7 +27,7 @@ SELF_CONSISTENCY_PATHS = 15  # Reduced from paper's 40 to 15 paths
 
 # Define prompt templates as a dictionary
 PROMPT_TEMPLATES = {
-   # Simple question prompt
+    # Simple question prompt
     "simple": {
         "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nChoose the correct answer and conclude with 'The answer is: <A/B/C/D>'. \n\nAnswer: """
@@ -37,38 +37,38 @@ PROMPT_TEMPLATES = {
         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
 
-Let's solve this step-by-step: """
+    Let's solve this step-by-step: """
     },
     # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
     "role": {
         "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
-\n\nQuestion: {question} \n\nAnswer: """,
+    \n\nQuestion: {question} \n\nAnswer: """,
         "multiple_choice": """From now on, you are an excellent teacher. One of your students wants to ask you a question. 
 
-Question: {question}
+    Question: {question}
 
-Options:
-{options}
+    Options:
+    {options}
 
-Explain what the correct answer is and conclude it with 'The answer is: <A/B/C/D>'.
+    Explain what the correct answer is and conclude it with 'The answer is: <A/B/C/D>'.
 
-"""
+    """
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
         "numeric": """Problem: {question} \n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step, and show the answer. 
-\n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+    \n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
         "multiple_choice": """Question: {question}
 
-Options:
-{options}
+    Options:
+    {options}
 
-Let's approach this systematically:
-1. First, let's understand the question
-2. Then, analyze each option carefully
-3. Finally, choose the most appropriate answer and conclude it with 'The answer is: <A/B/C/D>'.
+    Let's approach this systematically:
+    1. First, let's understand the question
+    2. Then, analyze each option carefully
+    3. Finally, choose the most appropriate answer and conclude it with 'The answer is: <A/B/C/D>'.
 
-"""
+    """
     }
 }
 
@@ -512,6 +512,26 @@ def get_prompt_ending(template_name, dataset_type):
     # Remove trailing whitespace from the ending
     return segments[-1].rstrip()
 
+def extract_numeric_answer(answer_text):
+    """Extract the final numeric value from a GSM8K-style answer string."""
+    # Look for the number after ####
+    if '####' in answer_text:
+        final_part = answer_text.split('####')[-1].strip()
+        try:
+            return float(final_part)
+        except ValueError:
+            pass
+    
+    # If no #### found, try to find the last number in the text
+    numbers = re.findall(r'-?\d*\.?\d+', answer_text)
+    if numbers:
+        try:
+            return float(numbers[-1])
+        except ValueError:
+            pass
+            
+    return None
+
 def process_dataset_batch(pipe, dataset, template_name, args):
     """Process dataset using batched inference with HF Dataset API"""
     if args.debug:
@@ -535,7 +555,15 @@ def process_dataset_batch(pipe, dataset, template_name, args):
                 try:
                     example = dataset[idx]
                     question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                    gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+                    raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+                    
+                    # Extract just the numeric value from the gold answer
+                    if args.dataset in ["gsm8k", "drop"]:
+                        gold_answer = extract_numeric_answer(raw_gold_answer)
+                        if gold_answer is not None:
+                            gold_answer = str(int(gold_answer))  # Convert to integer string
+                    else:
+                        gold_answer = raw_gold_answer
 
                     # Extract options and passage if available
                     options = None
@@ -650,17 +678,19 @@ def process_dataset_batch(pipe, dataset, template_name, args):
                     if args.dataset in ["gsm8k", "drop"]:
                         try:
                             pred_num = float(pred_answer.replace(',', ''))
-                            gold_num = float(meta["gold_answer"].replace(',', ''))
+                            gold_num = float(meta["gold_answer"])
                             is_correct = abs(pred_num - gold_num) < 1e-7
-                        except ValueError as e:
+                        except (ValueError, TypeError) as e:
                             if args.debug:
-                                print(f"Error converting numbers for sample index {meta['sample_index']}: {e}")
+                                print(f"Error comparing numeric answers for sample index {meta['sample_index']}: {e}")
+                                print(f"Predicted answer: {pred_answer}")
+                                print(f"Gold answer: {meta['gold_answer']}")
                     else:
-                        is_correct = pred_answer.upper() == meta["gold_answer"].upper()
+                        is_correct = str(pred_answer).upper() == str(meta["gold_answer"]).upper()
 
                 if is_correct:
                     correct += 1
-                total += 1
+                    total += 1
 
                 model_response_text = "\n".join(model_responses)
 
@@ -676,16 +706,37 @@ def process_dataset_batch(pipe, dataset, template_name, args):
                     "is_correct": is_correct
                 })
 
+            # Print batch summary for self-consistency
+            if args.debug:
+                batch_results = results[-len(batch_meta):]
+                batch_correct = sum(1 for r in batch_results if r['is_correct'])
+                batch_total = len(batch_results)
+                print(f"\nBatch {start_idx//batch_size + 1} Summary (Self-Consistency):")
+                print(f"Batch accuracy: {batch_correct/batch_total:.2%}")
+                print(f"Overall accuracy: {correct/total:.2%}")
+                print(f"Total correct so far: {correct}/{total}")
+                print("-" * 50)
+
     else:
         # Single path processing in batches
         for start_idx in tqdm(range(0, max_samples, batch_size), desc=f"Processing {template_name} in batches"):
             batch_prompts = []
             batch_examples = []
+            batch_correct = 0  # Add counter for correct answers in current batch
+            
             for idx in range(start_idx, min(start_idx + batch_size, max_samples)):
                 try:
                     example = dataset[idx]
                     question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                    gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+                    raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+                    
+                    # Extract just the numeric value from the gold answer
+                    if args.dataset in ["gsm8k", "drop"]:
+                        gold_answer = extract_numeric_answer(raw_gold_answer)
+                        if gold_answer is not None:
+                            gold_answer = str(int(gold_answer))  # Convert to integer string
+                    else:
+                        gold_answer = raw_gold_answer
 
                     # Extract options and passage if available
                     options = None
@@ -768,19 +819,22 @@ def process_dataset_batch(pipe, dataset, template_name, args):
                         print(f"Model response: {model_response}")
                         print(f"Extracted answer: {pred_answer}")
                         print(f"Gold answer: {gold_answer}")
+                        print(f"Correct: {pred_answer == gold_answer}")
 
                     is_correct = False
                     if pred_answer is not None and gold_answer is not None:
                         if args.dataset in ["gsm8k", "drop"]:
                             try:
                                 pred_num = float(pred_answer.replace(',', ''))
-                                gold_num = float(gold_answer.replace(',', ''))
+                                gold_num = float(gold_answer)
                                 is_correct = abs(pred_num - gold_num) < 1e-7
-                            except ValueError as e:
+                            except (ValueError, TypeError) as e:
                                 if args.debug:
-                                    print(f"Error converting numbers for batch sample index {idx}: {e}")
+                                    print(f"Error comparing numeric answers for sample index {idx}: {e}")
+                                    print(f"Predicted answer: {pred_answer}")
+                                    print(f"Gold answer: {gold_answer}")
                         else:
-                            is_correct = pred_answer.upper() == gold_answer.upper()
+                            is_correct = str(pred_answer).upper() == str(gold_answer).upper()
 
                     results.append({
                         "sample_index": idx,
@@ -793,10 +847,26 @@ def process_dataset_batch(pipe, dataset, template_name, args):
 
                     if is_correct:
                         correct += 1
+                        batch_correct += 1  # Increment batch correct counter
                     total += 1
                 else:
                     if args.debug:
                         print(f"No generated text found in batch output for sample index {idx}.")
+
+            # Print batch accuracy after processing each batch
+            if args.debug:
+                print(f"\nBatch {start_idx//batch_size + 1} Summary (Single-Path):")
+                print(f"Batch accuracy: {batch_correct/len(batch_examples):.2%}")
+                print(f"Overall accuracy: {correct/total:.2%}")
+                print(f"Total correct so far: {correct}/{total}")
+                print("-" * 50)
+
+    if args.debug:
+        print(f"\nBatch Summary:")
+        print(f"Correct answers in this batch: {sum(1 for r in results[-batch_size:] if r['is_correct'])}")
+        print(f"Total processed in this batch: {len(results[-batch_size:])}")
+        print(f"Running accuracy: {correct/total:.2%}")
+
     return correct, total, results
 
 def main():

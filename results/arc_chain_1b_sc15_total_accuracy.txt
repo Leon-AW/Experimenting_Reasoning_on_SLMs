@@ -1,0 +1,4 @@
+Final Accuracy of chain on arc: 27.10%
+Total Correct Answers: 271/1000 Questions
+
+Unextracted Answers: 0 samples
