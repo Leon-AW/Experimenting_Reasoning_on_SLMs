@@ -1,0 +1,21 @@
+Final Accuracy of chain on gsm8k: 7.60%
+Total Correct Answers: 76/1000 Questions
+
+Unextracted Answers: 0 samples
+
+Hyperparameters:
+Model: meta-llama/Llama-3.2-1B
+Batch Size: 96
+Number of GPUs: 3
+Max Memory per GPU: 75GB
+Min New Tokens: 1
+Max New Tokens: 256
+Temperature: 0.7
+Top P: 0.9
+Top K: 0
+Do Sample: True
+Number of Return Sequences: 1
+Self Consistency: True
+Self Consistency Paths: 15
+Device: cuda
+Random Seed: 42
