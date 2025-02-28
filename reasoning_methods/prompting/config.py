@@ -9,7 +9,7 @@ TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
-SELF_CONSISTENCY_PATHS = 40
+SELF_CONSISTENCY_PATHS = 20
 
 # Dataset configurations
 DATASET_CONFIGS = {
@@ -68,15 +68,15 @@ PROMPT_TEMPLATES = {
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
     "chain": {
         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nYou must provide a complete answer and conclude with 'The answer is: <A/B/C/D>'.
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\n
 
         Let's solve this step-by-step: """
             },
             # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
             "role": {
-                "numeric": """From now on, you are an excellent teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
+                "numeric": """From now on, you are an excellent math teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
         \n\nQuestion: {question} \n\nAnswer: """,
-                "multiple_choice": """From now on, you are an excellent teacher. One of your students wants to ask you a question. 
+                "multiple_choice": """From now on, you are an excellen math teacher. One of your students wants to ask you a question. 
 
         Question: {question}
 
@@ -97,7 +97,7 @@ Options:
 Let's approach this systematically:
 1. First, let's understand the question
 2. Then, analyze each option carefully
-3. Finally, choose the most appropriate answer and conclude it with 'The answer is: <A/B/C/D>'.
+3. Finally, choose the highest probability answer.
 
 """
     }

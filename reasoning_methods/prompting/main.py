@@ -6,7 +6,8 @@ import csv
 import torch
 from transformers import AutoModelForCausalLM, pipeline, AutoTokenizer
 
-from .config import (
+# Change relative imports to absolute imports
+from reasoning_methods.prompting.config import (
     SEED, 
     DATASET_CONFIGS, 
     SELF_CONSISTENCY_PATHS, 
@@ -19,8 +20,8 @@ from .config import (
     DO_SAMPLE,
     NUM_RETURN_SEQUENCES
 )
-from .dataset_utils import configure_hardware, load_custom_dataset
-from .evaluator import process_dataset_batch
+from reasoning_methods.prompting.dataset_utils import configure_hardware, load_custom_dataset
+from reasoning_methods.prompting.evaluator import process_dataset_batch
 
 
 def main():
@@ -36,6 +37,9 @@ def main():
                        help='LLaMA model size (1b or 3b)')
     parser.add_argument('--self_consistency', action='store_true',
                        help='Enable self-consistency with 15 paths')
+    parser.add_argument('--template', type=str, default=None,
+                       choices=list(PROMPT_TEMPLATES.keys()),
+                       help='Specific template to evaluate (default: evaluate all templates)')
     args = parser.parse_args()
 
     # Configure hardware
@@ -70,8 +74,10 @@ def main():
     dataset_config = DATASET_CONFIGS[args.dataset]
     dataset = load_custom_dataset(dataset_config)
 
-    # Evaluate each template
-    for template_name in PROMPT_TEMPLATES.keys():
+    # Evaluate each template or just the specified one
+    templates_to_evaluate = [args.template] if args.template else PROMPT_TEMPLATES.keys()
+    
+    for template_name in templates_to_evaluate:
         print(f"\n{'='*50}")
         print(f"Starting template: {template_name}")
         print(f"{'='*50}\n")
