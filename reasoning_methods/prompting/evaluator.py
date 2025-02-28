@@ -165,7 +165,7 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                         "sample_index": idx,
                         "question": question,
                         "prompt": formatted_prompt,
-                        "generated_text": f"Self-consistency with {SELF_CONSISTENCY_PATHS} paths",
+                        "generated_text": f"Self-consistency answers: {sc_answers}",
                         "pred_answer": pred_answer,
                         "gold_answer": gold_answer,
                         "is_correct": is_correct

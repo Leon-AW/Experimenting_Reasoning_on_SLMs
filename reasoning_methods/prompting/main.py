@@ -53,7 +53,7 @@ def main():
         MODEL_NAME,
         torch_dtype=torch.float16,
         device_map="balanced" if num_gpus > 1 else "auto",
-        max_memory={i: max_memory for i in range(num_gpus)},
+        max_memory=max_memory,
     )
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model.eval()
