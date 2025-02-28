@@ -24,45 +24,41 @@ def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
         
     # Create candidate letters corresponding to options (i.e. "A", "B", etc.)
     candidate_letters = [chr(65 + i) for i in range(len(options))]
+    scores = {}
     
-    # Create all candidate texts at once with a space prefix
-    candidate_texts = [" " + letter for letter in candidate_letters]
-    full_inputs = [base_context + candidate_text for candidate_text in candidate_texts]
-    
-    # Batch tokenize all candidates at once
-    tokenized = tokenizer(full_inputs, return_tensors="pt", padding=True).to(model.device)
-    
-    # Pre-tokenize the base context for length calculation
+    # Pre-tokenize the base context for reuse.
     base_tokens = tokenizer(base_context, return_tensors="pt").input_ids.to(model.device)
     base_length = base_tokens.shape[1]
     
-    # Set up the labels so that base context tokens are ignored (-100)
-    labels = tokenized.input_ids.clone()
-    labels[:, :base_length] = -100
-    
-    # Get log likelihoods for all candidates in one forward pass
-    with torch.no_grad():
-        outputs = model(tokenized.input_ids, labels=labels)
-    
-    # Calculate scores for each candidate
-    scores = {}
-    for i, letter in enumerate(candidate_letters):
+    for letter in candidate_letters:
+        # Append the candidate letter (with a leading space)
+        candidate_text = " " + letter
+        full_input = base_context + candidate_text
+        tokenized = tokenizer(full_input, return_tensors="pt").to(model.device)
+        
+        # Candidate tokens are those after the base context.
+        candidate_len = tokenized.input_ids.shape[1] - base_length
+        
+        # Set up the labels so that base context tokens are ignored.
+        labels = tokenized.input_ids.clone()
+        labels[:, :base_length] = -100
+        
+        with torch.no_grad():
+            outputs = model(tokenized.input_ids, labels=labels)
         # The loss returned is the average negative log likelihood over candidate tokens;
-        # We need to calculate per-token values for each candidate
-        candidate_len = (tokenized.input_ids[i] != tokenizer.pad_token_id).sum() - base_length
-        loss = outputs.loss_by_sample[i].item() if hasattr(outputs, 'loss_by_sample') else outputs.loss.item()
+        # multiply by candidate token count to get the total (negative) log likelihood.
+        loss = outputs.loss.item()
         total_loss = loss * candidate_len
-        # Higher log likelihood means lower loss, so we negate
-        loglikelihood = -total_loss
+        # Higher log likelihood means lower loss, so we negate.
+        loglikelihood = -total_loss  
         scores[letter] = loglikelihood
-    
+
     # If temperature is 0, just return the highest scoring option
     if temperature == 0.0:
         best_letter = max(scores, key=scores.get)
     else:
         # Convert scores to probabilities using softmax with temperature
-        # Ensure all values are Python floats, not tensors
-        logits = np.array([float(scores[letter]) for letter in candidate_letters])
+        logits = np.array([scores[letter] for letter in candidate_letters])
         # Apply temperature scaling
         logits = logits / temperature
         # Softmax to get probabilities

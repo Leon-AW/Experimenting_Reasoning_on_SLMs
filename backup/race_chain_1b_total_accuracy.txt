@@ -1,5 +1,5 @@
-Final Accuracy of simple on race: 0.00%
-Total Correct Answers: 0/0 Questions
+Final Accuracy of chain on race: 21.00%
+Total Correct Answers: 210/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -15,7 +15,6 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: True
-Self Consistency Paths: 20
+Self Consistency: False
 Device: cuda
 Random Seed: 42
