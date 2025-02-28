@@ -6,7 +6,7 @@ from .config import MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, TOP_P, TOP_K, D
 import torch  # Make sure torch is imported
 
 
-def get_mmlu_pred_answer(prompt, options, model, tokenizer):
+def get_mc_pred_answer(prompt, options, model, tokenizer):
     """
     Given a prompt and a list of candidate options, compute the log likelihood
     of each candidate answer when appended (after an "Answer:" marker) to the prompt.
@@ -92,6 +92,11 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                 question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
                 gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
+                # Normalize the gold_answer to numeric
+                mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+                if gold_answer.upper() in mapping:
+                    gold_answer = mapping[gold_answer.upper()]
+
                 # Get available options and (if available) passage context.
                 options = None
                 passage = None
@@ -115,7 +120,7 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                 formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                 
                 # Use log-likelihood scoring to choose the candidate answer.
-                pred_answer = get_mmlu_pred_answer(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else None
+                pred_answer = get_mc_pred_answer(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else None
 
                 is_correct = False
                 if pred_answer is not None and gold_answer is not None:
@@ -152,7 +157,6 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
 
     else:
         # --- NUMERIC TASKS (gsm8k, drop): Use Generation and Extraction Pipeline ---
-        # The existing logic for self-consistency and single-path processing is kept unchanged.
         if args.self_consistency:
             # [Existing self-consistency branch for numeric tasks]
             for start_idx in tqdm(range(0, max_samples, batch_size),
@@ -172,9 +176,6 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                         
                         passage = None
                         options = None
-                        if args.dataset == "gsm8k" or args.dataset == "drop":
-                            # For numeric tasks, options typically are not used.
-                            pass
                         formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                         batch_meta.append({
                             "sample_index": idx,
@@ -183,15 +184,11 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                             "prompt": formatted_prompt,
                             "options": options
                         })
-                        # Replicate each prompt for the self-consistency paths.
-                        replicated_prompts.extend([formatted_prompt] * SELF_CONSISTENCY_PATHS)
+                        replicated_prompts.append(formatted_prompt)
                     except Exception as e:
                         if args.debug:
                             print(f"Error preparing self-consistency batch for sample index {idx}: {str(e)}")
                         continue
-
-                if not replicated_prompts:
-                    continue
 
                 try:
                     outputs = pipe(
@@ -201,8 +198,8 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                         temperature=TEMPERATURE,
                         top_p=TOP_P,
                         top_k=TOP_K,
-                        do_sample=True,
-                        num_return_sequences=1,
+                        do_sample=DO_SAMPLE,
+                        num_return_sequences=SELF_CONSISTENCY_PATHS,
                         pad_token_id=pipe.tokenizer.eos_token_id
                     )
                 except Exception as e:
@@ -228,7 +225,6 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                             if generated_text:
                                 model_response = generated_text[len(meta["prompt"]):].strip()
                                 model_responses.append(model_response)
-                                # Using the extractor for numeric answers.
                                 answer = extract_numeric_answer(generated_text)
                                 if answer is not None:
                                     answers.append(str(int(answer)))
@@ -237,7 +233,6 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                                 print(f"Error processing self-consistency output for sample index {meta['sample_index']}: {str(e)}")
                             continue
 
-                    # For numeric tasks, use majority vote over the extracted answers.
                     pred_answer = None
                     if answers:
                         counts = Counter(answers)
@@ -293,8 +288,6 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
 
                         options = None
                         passage = None
-                        if args.dataset == "gsm8k" or args.dataset == "drop":
-                            pass
                         formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                         batch_examples.append({
                             "sample_index": idx,

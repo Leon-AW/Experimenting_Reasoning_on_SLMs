@@ -1,5 +1,5 @@
-Final Accuracy of role on arc: 23.70%
-Total Correct Answers: 237/1000 Questions
+Final Accuracy of role on arc: 36.50%
+Total Correct Answers: 365/1000 Questions
 
 Unextracted Answers: 0 samples
 

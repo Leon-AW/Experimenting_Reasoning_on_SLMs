@@ -1,5 +1,5 @@
-Final Accuracy of plan on arc: 24.50%
-Total Correct Answers: 245/1000 Questions
+Final Accuracy of plan on arc: 31.40%
+Total Correct Answers: 314/1000 Questions
 
 Unextracted Answers: 0 samples
 
