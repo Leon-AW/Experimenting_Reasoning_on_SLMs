@@ -1,5 +1,5 @@
-Final Accuracy of plan on drop: 0.00%
-Total Correct Answers: 0/0 Questions
+Final Accuracy of plan on gsm8k: 3.70%
+Total Correct Answers: 37/1000 Questions
 
 Unextracted Answers: 0 samples
 

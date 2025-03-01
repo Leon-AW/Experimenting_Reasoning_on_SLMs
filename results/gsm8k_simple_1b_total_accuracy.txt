@@ -1,5 +1,5 @@
-Final Accuracy of simple on drop: 0.00%
-Total Correct Answers: 0/1000 Questions
+Final Accuracy of simple on gsm8k: 4.20%
+Total Correct Answers: 42/1000 Questions
 
 Unextracted Answers: 0 samples
 

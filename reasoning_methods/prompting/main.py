@@ -6,6 +6,8 @@ import csv
 import sys
 import torch
 from transformers import AutoModelForCausalLM, pipeline, AutoTokenizer
+import random
+import numpy as np
 
 # Change relative imports to absolute imports
 from reasoning_methods.prompting.config import (
@@ -23,7 +25,6 @@ from reasoning_methods.prompting.config import (
 )
 from reasoning_methods.prompting.dataset_utils import configure_hardware, load_custom_dataset
 from reasoning_methods.prompting.evaluator import process_dataset_batch
-
 
 def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batch_size, model_name, device, num_gpus, max_memory):
     """Run a single experiment (one dataset + one template with given self-consistency flag)
@@ -91,6 +92,16 @@ def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batc
 
 
 def main():
+    # Set all the required seeds for reproducibility
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='gsm8k',

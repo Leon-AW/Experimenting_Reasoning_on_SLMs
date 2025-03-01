@@ -2,131 +2,6 @@ import re
 from collections import Counter
 
 
-def extract_gsm8k_answer(generated_text):
-    """
-    Extract numeric answer from GSM8K-style responses.
-    Returns the last number found after "The final answer is" or similar patterns.
-    """
-    # First try to find "The final answer is" pattern
-    final_answer_patterns = [
-        r"The final answer is:?\s*\$?\\?\s*(?:boxed{)?(\d[\d,]*(?:\.\d+)?)}?",  # Matches LaTeX \boxed{} and similar
-        r"The final answer is:?\s*\$?([\d,]+(?:\.\d+)?)",  # Regular number pattern
-        r"The final answer is:?\s*\$?\s*(?:is\s+)?(\d[\d,]*(?:\.\d+)?)",  # More flexible pattern
-    ]
-    
-    for pattern in final_answer_patterns:
-        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
-        if matches:
-            match = matches[-1]  # Take the last match
-            clean_number = match.group(1).replace(',', '').replace('$', '').replace('\\', '').strip()
-            try:
-                return str(int(float(clean_number) + 0.5))
-            except ValueError:
-                continue
-    
-    # If no explicit "final answer" found, look for the last number in the text
-    numbers = re.findall(r"\d[\d,]*(?:\.\d+)?", generated_text)
-    if numbers:
-        clean_number = numbers[-1].replace(',', '').replace('$', '')
-        try:
-            return str(int(float(clean_number) + 0.5))
-        except ValueError:
-            pass
-    
-    return None
-
-
-def extract_drop_answer(generated_text):
-    """
-    Extract numeric answers from DROP-style responses.
-    Similar to GSM8K but handles more number formats and units.
-    """
-    # Try to find "The final answer is" pattern first
-    final_patterns = [
-        r"The final answer is:?\s*(\d+(?:\.\d+)?)",
-        r"The answer is:?\s*(\d+(?:\.\d+)?)",
-    ]
-    
-    for pattern in final_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
-            try:
-                return str(int(float(match.group(1)) + 0.5))
-            except ValueError:
-                continue
-    
-    # Look for numbers with common units
-    unit_patterns = [
-        r"(\d+(?:\.\d+)?)\s*(?:people|points|yards|feet|meters|kilometers|miles|years|dollars)",
-        r"\$\s*(\d+(?:\.\d+)?)",
-    ]
-    
-    for pattern in unit_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
-            try:
-                return str(int(float(match.group(1)) + 0.5))
-            except ValueError:
-                continue
-    
-    return None
-
-
-def extract_arc_answer(generated_text):
-    """
-    Extract multiple choice answers from ARC-style responses.
-    Expects A, B, C, or D as answers.
-    """
-    # First check if the model actually generated any reasoning past the prompt
-    reasoning_text = generated_text.split("Answer:")[-1]  # Get only the model's response
-    if not reasoning_text.strip():
-        return None
-
-    # Look for explicit answer statements with better pattern coverage
-    patterns = [
-        r"Answer:\s*([A-D])",  # Matches "Answer: A" format
-        r"The (?:correct )?answer is[:\s]\s*([A-D])",  # Matches "The answer is: A"
-        r"(?:Option|Choice)\s*([A-D])",  # Matches "Option C" or "Choice B"
-        r"([A-D])\s*is (?:the )?correct",  # Matches "C is correct"
-        r"I (?:choose|select)\s*([A-D])",  # Matches "I choose D"
-        r"\b([A-D])\b(?=[^a-z]*$)",  # Single letter at end of response
-        r"answer\s*[=:]\s*([A-D])"  # Matches "answer = B"
-    ]
-    
-    # First try to find explicit letter answers
-    for pattern in patterns:
-        matches = re.findall(pattern, generated_text, re.IGNORECASE)
-        if matches:
-            # Take last match as final answer
-            return matches[-1].upper()
-    
-    # If no letter found, try to match numeric values to options
-    numeric_match = re.search(r'(\d+(?:\.\d+)?(?:\s*(?:km/h|meters|kg|points|dollars|years))?)\s*$', generated_text)
-    if numeric_match:
-        # Look for this value in the original options
-        value = numeric_match.group(1).strip()
-        options_pattern = r'[A-D]\)\s*(' + re.escape(value) + r')'
-        option_match = re.search(options_pattern, generated_text)
-        if option_match:
-            # Find which option letter corresponds to this value
-            option_section = generated_text.split("Options:")[-1].split("Answer:")[0]
-            for line in option_section.split('\n'):
-                if value in line:
-                    letter_match = re.match(r'([A-D])\)', line)
-                    if letter_match:
-                        return letter_match.group(1).upper()
-    
-    # Fallback: Look for first capital letter A-D in last 3 lines
-    last_lines = generated_text.strip().split('\n')[-3:]
-    for line in reversed(last_lines):
-        match = re.search(r'\b([A-D])\b', line)
-        if match:
-            return match.group(0).upper()
-    
-    # Return None if no answer found
-    return None
-
-
 def extract_multiple_choice_answer(generated_text):
     """
     Extract multiple choice answers from any multiple choice dataset responses.
@@ -276,120 +151,80 @@ def extract_multiple_choice_answer(generated_text):
     return None
 
 
-def extract_mmlu_answer(generated_text):
+def extract_numeric_answer(generated_text):
     """
-    Extract multiple choice answers from MMLU-style responses.
-    Handles both letter choices and numeric choices.
-    Note: MMLU gold answers are provided as numbers (e.g. "0" means option A).
+    Extract numeric answer from generated text and round up at x.5 or higher, otherwise round down.
     """
-    # Use only the part after the last "Answer:" and take just the first line to avoid extra explanation.
-    if "Answer:" in generated_text:
-        response = generated_text.split("Answer:")[-1].strip().splitlines()[0].strip()
-    else:
-        response = generated_text.strip().splitlines()[0].strip()
-    
-    # First try to find explicit numeric answers directly.
-    numeric_patterns = [
-        r"(?:[Tt]he (?:correct )?answer is[:\s]*)([0-9]+)\b",
-        r"(?:Option|Choice)[:\s]*([0-9]+)\b",
-        r"\b([0-9]+)\b\s*(?:is correct)?",
-    ]
-    for pattern in numeric_patterns:
-        match = re.search(pattern, response, re.IGNORECASE)
-        if match:
-            return match.group(1)
-    
-    # Next try letter patterns and convert them to numbers (A->0, B->1, etc.)
-    letter_patterns = [
-        r"(?:[Tt]he (?:correct )?answer is[:\s]*)([A-D])\b",
-        r"(?:Option|Choice)[:\s]*([A-D])\b",
-        r"\b([A-D])\b\s*(?:is correct)?",
-    ]
-    for pattern in letter_patterns:
-        match = re.search(pattern, response, re.IGNORECASE)
-        if match:
-            letter_ans = match.group(1).upper()
-            mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
-            return mapping.get(letter_ans, None)
-    
-    # Fallback: if the response is exactly a single character or a digit.
-    if response in ['A', 'B', 'C', 'D']:
-        mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
-        return mapping[response]
-    if response.isdigit():
-        return response
-    
-    return None
-
-
-def extract_agieval_answer(generated_text):
-    """
-    Extract answers from AGIEval-style responses.
-    Handles multiple formats including multiple choice and numeric answers.
-    """
-    # First try multiple choice patterns
-    mc_patterns = [
-        r"The (?:correct )?answer is[:\s]\s*([A-D])",
-        r"(?:Option|Choice)[:\s]\s*([A-D])",
-        r"([A-D])\s*is correct",
+    # First try to find "The final answer is" pattern
+    final_answer_patterns = [
+        r"The final answer is:?\s*\$?\\?\s*(?:boxed{)?(\d[\d,]*(?:\.\d+)?)}?",  # Matches LaTeX \boxed{} and similar
+        r"The final answer is:?\s*\$?([\d,]+(?:\.\d+)?)",  # Regular number pattern
+        r"The final answer is:?\s*\$?\s*(?:is\s+)?(\d[\d,]*(?:\.\d+)?)",  # More flexible pattern
     ]
     
-    for pattern in mc_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
-            return match.group(1).upper()
-    
-    # Then try numeric patterns
-    numeric_patterns = [
-        r"The (?:final )?answer is:?\s*(\d+(?:\.\d+)?)",
-        r"=\s*(\d+(?:\.\d+)?)\s*$",
-    ]
-    
-    for pattern in numeric_patterns:
-        match = re.search(pattern, generated_text, re.IGNORECASE)
-        if match:
+    for pattern in final_answer_patterns:
+        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
+        if matches:
+            match = matches[-1]  # Take the last match
+            clean_number = match.group(1).replace(',', '').replace('$', '').replace('\\', '').strip()
             try:
-                return str(int(float(match.group(1)) + 0.5))
+                return str(int(float(clean_number) + 0.5))
             except ValueError:
                 continue
+
+    # Look for "Answer:" or "Answer is:" followed by a number
+    answer_patterns = [
+        r"[Aa]nswer(?:\s+is)?:\s*=\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match number after equals sign
+        r"[Aa]nswer(?:\s+is)?:\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match first number after Answer:
+        r"[Aa]nswer(?:\s*[^=\n]*)?=\s*[^=\n]*?(\d[\d,]*(?:\.\d+)?)\s*$"  # Match final number in equation after Answer:
+    ]
     
-    return None
+    for pattern in answer_patterns:
+        matches = list(re.finditer(pattern, generated_text))  # Removed re.IGNORECASE since we handle case in pattern
+        if matches:
+            match = matches[-1]  # Take the last match
+            clean_number = match.group(1).replace(',', '').replace('$', '')
+            try:
+                return str(int(float(clean_number) + 0.5))
+            except ValueError:
+                continue
 
-
-def get_answer_extractor(dataset_name):
-    """
-    Returns the appropriate answer extraction function based on dataset name.
-    The returned function expects a full_text parameter that contains both 
-    the prompt and model response concatenated.
-    """
-    if dataset_name in ["race", "arc", "agieval"]:
-        return extract_multiple_choice_answer
-    elif dataset_name == "gsm8k":
-        return extract_gsm8k_answer
-    elif dataset_name == "drop":
-        return extract_drop_answer
-    elif dataset_name == "mmlu":
-        return extract_mmlu_answer
-    else:
-        return extract_gsm8k_answer  # Default to GSM8K extractor
-
-
-def extract_numeric_answer(answer_text):
-    """Extract the final numeric value from a GSM8K-style answer string."""
-    # Look for the number after ####
-    if '####' in answer_text:
-        final_part = answer_text.split('####')[-1].strip()
-        try:
-            return float(final_part)
-        except ValueError:
-            pass
+    # If no calculation found, try other patterns
+    other_patterns = [
+        r"(?:answer|solution)(?:\s+is)?:?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)",
+        r"=\s*(\d[\d,]*(?:\.\d+)?)\s*$",
+    ]
     
-    # If no #### found, try to find the last number in the text
-    numbers = re.findall(r'-?\d*\.?\d+', answer_text)
+    for pattern in other_patterns:
+        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
+        if matches:
+            match = matches[-1]  # Take the last match
+            clean_number = match.group(1).replace(',', '').replace('$', '')
+            try:
+                return str(int(float(clean_number) + 0.5))
+            except ValueError:
+                continue
+
+    # Last resort: find the last number in the text
+    numbers = re.findall(r"\d[\d,]*(?:\.\d+)?", generated_text)
     if numbers:
+        clean_number = numbers[-1].replace(',', '').replace('$', '')
         try:
-            return float(numbers[-1])
+            return str(int(float(clean_number) + 0.5))
         except ValueError:
             pass
-            
+
     return None
+
+
+def extract_gold_gsm8k_answer(answer_text):
+    """
+    Extracts the gold numeric answer from the GSM8K dataset.
+    Expects the answer to be prefixed with the token '####'.
+    """
+    import re
+    match = re.search(r'####\s*(-?\d+)', answer_text)
+    if match:
+        return str(int(match.group(1)))
+    else:
+        raise ValueError("No valid answer found.")

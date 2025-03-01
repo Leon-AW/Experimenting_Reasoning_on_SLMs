@@ -1,10 +1,11 @@
 from tqdm import tqdm
 from collections import Counter
-from .answer_extraction import get_answer_extractor, extract_numeric_answer
+from .answer_extraction import extract_numeric_answer, extract_gold_gsm8k_answer
 from .prompts import format_prompt
 from .config import MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, TOP_P, TOP_K, DO_SAMPLE, NUM_RETURN_SEQUENCES, SELF_CONSISTENCY_PATHS, DATASET_CONFIGS
 import torch  # Make sure torch is imported
 import numpy as np
+import re
 
 
 def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
@@ -256,7 +257,7 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
     else:
         # --- NUMERIC TASKS (gsm8k, drop): Use Generation and Extraction Pipeline ---
         if args.self_consistency:
-            # [Existing self-consistency branch for numeric tasks]
+            # --- NUMERIC TASKS: Self-Consistency Branch ---
             for start_idx in tqdm(range(0, max_samples, batch_size),
                                   desc=f"Processing {template_name} in batches (self consistency)"):
                 batch_meta = []
@@ -265,14 +266,32 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                     try:
                         example = dataset[idx]
                         question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                        raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
                         
-                        # Extract numeric gold answer.
-                        gold_answer = extract_numeric_answer(raw_gold_answer)
-                        if gold_answer is not None:
-                            gold_answer = str(int(gold_answer))
+                        # Special handling for DROP dataset
+                        if args.dataset == "drop":
+                            answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
+                            # Use the first span as the gold answer
+                            if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
+                                raw_gold_answer = answers_spans['spans'][0]
+                            else:
+                                raw_gold_answer = str(answers_spans)
+                        else:
+                            raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
                         
+                        # For GSM8K: use the dedicated extraction function,
+                        # otherwise use extract_numeric_answer
+                        if args.dataset == "gsm8k":
+                            gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
+                        else:
+                            gold_answer = extract_numeric_answer(raw_gold_answer)
+                        
+                        # For DROP, if no numeric value could be extracted, leave raw_gold_answer (can be adjusted as needed)
+                        
+                        # For DROP, include the passage in the prompt
                         passage = None
+                        if args.dataset == "drop" and "passage" in example:
+                            passage = example["passage"]
+                            
                         options = None
                         formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                         batch_meta.append({
@@ -323,7 +342,7 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                             if generated_text:
                                 model_response = generated_text[len(meta["prompt"]):].strip()
                                 model_responses.append(model_response)
-                                answer = extract_numeric_answer(generated_text)
+                                answer = extract_numeric_answer(model_response)
                                 if answer is not None:
                                     answers.append(str(int(answer)))
                         except Exception as e:
@@ -360,8 +379,13 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                         "gold_answer": meta["gold_answer"],
                         "is_correct": is_correct
                     })
+                    
+                    # --- Added debug prints ---
                     if args.debug:
                         print(f"\nResult for sample index {meta['sample_index']}: {'Correct' if is_correct else 'Incorrect'}")
+                        print(f"All self-consistency extracted answers: {answers}")
+                        print(f"Final majority vote answer: {pred_answer}")
+                        print(f"Model responses:\n{model_response_text}")
                 if args.debug:
                     batch_results = results[-len(batch_meta):]
                     print(f"\nBatch {start_idx//batch_size + 1} Summary (Self-Consistency):")
@@ -373,19 +397,42 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
             for start_idx in tqdm(range(0, max_samples, batch_size), desc=f"Processing {template_name} in batches"):
                 batch_prompts = []
                 batch_examples = []
-                batch_correct = 0  
+                batch_correct = 0 
                 for idx in range(start_idx, min(start_idx + batch_size, max_samples)):
                     try:
                         example = dataset[idx]
                         question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                        raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
-
-                        gold_answer = extract_numeric_answer(raw_gold_answer)
+                        
+                        # Special handling for DROP dataset
+                        if args.dataset == "drop":
+                            answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
+                            # Use the first span as the gold answer
+                            if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
+                                raw_gold_answer = answers_spans['spans'][0]
+                            else:
+                                raw_gold_answer = str(answers_spans)
+                        else:
+                            raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+                        
+                        # Nutze für GSM8K die neue Extraktions-Funktion.
+                        if args.dataset == "gsm8k":
+                            gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
+                        else:
+                            gold_answer = extract_numeric_answer(raw_gold_answer)
+                        
+                        # Falls eine Zahl vorliegt, in string umwandeln
                         if gold_answer is not None:
                             gold_answer = str(int(gold_answer))
-
-                        options = None
+                        
+                        # Für DROP, falls kein Zahlenwert extrahiert werden konnte, nehme raw_gold_answer
+                        # (Dieser Teil kann bei Bedarf weiter angepasst werden)
+                        
+                        # Für DROP, include the passage in the prompt
                         passage = None
+                        if args.dataset == "drop" and "passage" in example:
+                            passage = example["passage"]
+                            
+                        options = None
                         formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                         batch_examples.append({
                             "sample_index": idx,
@@ -400,6 +447,10 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
                             print(f"Error preparing batch for sample index {idx}: {str(e)}")
                         continue
 
+                # Skip if no valid examples in this batch
+                if not batch_prompts:
+                    continue
+                    
                 try:
                     outputs = pipe(
                         batch_prompts,
@@ -427,7 +478,7 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
 
                     if generated_text:
                         model_response = generated_text[len(formatted_prompt):].strip()
-                        pred_answer = extract_numeric_answer(formatted_prompt + model_response)
+                        pred_answer = extract_numeric_answer(model_response)
                         if args.debug:
                             print(f"\nBatch sample index: {idx}")
                             print(f"Prompt: {formatted_prompt}")

@@ -30,8 +30,8 @@ def format_prompt(template_name, dataset_type, question, options=None, passage=N
     # Create the main body of the prompt using the template
     prompt_body = template.format(question=question, options=formatted_options)
     
-    # If the dataset is RACE and a passage exists, prepend the passage to the prompt
-    if dataset_type == "race" and passage:
+    # If the dataset is RACE or DROP and a passage exists, prepend the passage to the prompt
+    if (dataset_type == "race" or dataset_type == "drop") and passage:
         return f"Passage: {passage}\n\n" + prompt_body
     else:
         return prompt_body

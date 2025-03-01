@@ -47,7 +47,7 @@ DATASET_CONFIGS = {
         "split": None,
         "subset": "validation",
         "question_key": "question",
-        "answer_key": "answer"
+        "answer_key": "answers_spans"
     },
     "agieval": {
         "name": "cais/agieval",

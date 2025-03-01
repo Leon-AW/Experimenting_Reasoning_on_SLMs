@@ -1,5 +1,5 @@
-Final Accuracy of simple on drop: 0.00%
-Total Correct Answers: 0/1000 Questions
+Final Accuracy of role on gsm8k (self-consistency: True): 0.10%
+Total Correct Answers: 1/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -15,6 +15,7 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: False
+Self Consistency: True
+Self Consistency Paths: 20
 Device: cuda
 Random Seed: 42

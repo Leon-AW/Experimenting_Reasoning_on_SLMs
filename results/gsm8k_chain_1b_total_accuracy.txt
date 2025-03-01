@@ -1,5 +1,5 @@
-Final Accuracy of chain on drop: 0.00%
-Total Correct Answers: 0/0 Questions
+Final Accuracy of chain on gsm8k: 4.60%
+Total Correct Answers: 46/1000 Questions
 
 Unextracted Answers: 0 samples
 
