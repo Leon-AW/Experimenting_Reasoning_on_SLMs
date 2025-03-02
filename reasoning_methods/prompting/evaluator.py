@@ -257,141 +257,106 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
     else:
         # --- NUMERIC TASKS (gsm8k, drop): Use Generation and Extraction Pipeline ---
         if args.self_consistency:
-            # --- NUMERIC TASKS: Self-Consistency Branch ---
-            for start_idx in tqdm(range(0, max_samples, batch_size),
-                                  desc=f"Processing {template_name} in batches (self consistency)"):
-                batch_meta = []
-                replicated_prompts = []
-                for idx in range(start_idx, min(start_idx + batch_size, max_samples)):
-                    try:
-                        example = dataset[idx]
-                        question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                        
-                        # Special handling for DROP dataset
-                        if args.dataset == "drop":
-                            answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
-                            # Use the first span as the gold answer
-                            if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
-                                raw_gold_answer = answers_spans['spans'][0]
-                            else:
-                                raw_gold_answer = str(answers_spans)
-                        else:
-                            raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
-                        
-                        # For GSM8K: use the dedicated extraction function,
-                        # otherwise use extract_numeric_answer
-                        if args.dataset == "gsm8k":
-                            gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
-                        else:
-                            gold_answer = extract_numeric_answer(raw_gold_answer)
-                        
-                        # For DROP, if no numeric value could be extracted, leave raw_gold_answer (can be adjusted as needed)
-                        
-                        # For DROP, include the passage in the prompt
-                        passage = None
-                        if args.dataset == "drop" and "passage" in example:
-                            passage = example["passage"]
-                            
-                        options = None
-                        formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                        batch_meta.append({
-                            "sample_index": idx,
-                            "question": question,
-                            "gold_answer": gold_answer,
-                            "prompt": formatted_prompt,
-                            "options": options
-                        })
-                        replicated_prompts.append(formatted_prompt)
-                    except Exception as e:
-                        if args.debug:
-                            print(f"Error preparing self-consistency batch for sample index {idx}: {str(e)}")
-                        continue
-
+            for idx in tqdm(sample_indices, desc=f"Processing {template_name} (Self-Consistency Numeric)"):
                 try:
-                    outputs = pipe(
-                        replicated_prompts,
-                        min_new_tokens=MIN_NEW_TOKENS,
-                        max_new_tokens=MAX_NEW_TOKENS,
-                        temperature=TEMPERATURE,
-                        top_p=TOP_P,
-                        top_k=TOP_K,
-                        do_sample=DO_SAMPLE,
-                        num_return_sequences=SELF_CONSISTENCY_PATHS,
-                        pad_token_id=pipe.tokenizer.eos_token_id
-                    )
-                except Exception as e:
-                    if args.debug:
-                        print(f"Error in batch self-consistency generation for samples {start_idx} to {min(start_idx + batch_size, max_samples)-1}: {str(e)}")
-                    continue
+                    example = dataset[idx]
+                    question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
 
-                for i, meta in enumerate(batch_meta):
-                    start_pos = i * SELF_CONSISTENCY_PATHS
-                    end_pos = start_pos + SELF_CONSISTENCY_PATHS
-                    sample_outputs = outputs[start_pos:end_pos]
+                    # Special handling for DROP dataset.
+                    if args.dataset == "drop":
+                        answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
+                        if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
+                            raw_gold_answer = answers_spans['spans'][0]
+                        else:
+                            raw_gold_answer = str(answers_spans)
+                    else:
+                        raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-                    answers = []
-                    model_responses = []
+                    # Use dedicated extraction for GSM8K if applicable.
+                    if args.dataset == "gsm8k":
+                        gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
+                    else:
+                        gold_answer = extract_numeric_answer(raw_gold_answer)
 
-                    for output in sample_outputs:
+                    # For DROP, include the passage in the prompt.
+                    passage = None
+                    if args.dataset == "drop" and "passage" in example:
+                        passage = example["passage"]
+
+                    options = None
+                    formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+
+                    sc_answers = []
+                    for _ in range(SELF_CONSISTENCY_PATHS):
                         try:
+                            output = pipe(
+                                formatted_prompt,
+                                min_new_tokens=MIN_NEW_TOKENS,
+                                max_new_tokens=MAX_NEW_TOKENS,
+                                temperature=TEMPERATURE,
+                                top_p=TOP_P,
+                                top_k=TOP_K,
+                                do_sample=DO_SAMPLE,
+                                num_return_sequences=1,
+                                pad_token_id=pipe.tokenizer.eos_token_id
+                            )
                             if isinstance(output, list) and len(output) > 0 and isinstance(output[0], dict):
                                 generated_text = output[0].get('generated_text', '')
                             else:
                                 generated_text = output.get("generated_text", "") if isinstance(output, dict) else str(output)
-
+                            
                             if generated_text:
-                                model_response = generated_text[len(meta["prompt"]):].strip()
-                                model_responses.append(model_response)
-                                answer = extract_numeric_answer(model_response)
-                                if answer is not None:
-                                    answers.append(str(int(answer)))
-                        except Exception as e:
+                                # Remove the prompt portion from the generated text.
+                                model_response = generated_text[len(formatted_prompt):].strip()
+                                numeric_extracted = extract_numeric_answer(model_response)
+                                if numeric_extracted is not None:
+                                    # Convert to int and then back to string for majority voting.
+                                    sc_answers.append(str(int(numeric_extracted)))
+                        except Exception as inner_e:
                             if args.debug:
-                                print(f"Error processing self-consistency output for sample index {meta['sample_index']}: {str(e)}")
+                                print(f"Error during self consistency generation for sample index {idx}: {inner_e}")
                             continue
 
-                    pred_answer = None
-                    if answers:
-                        counts = Counter(answers)
-                        max_count = max(counts.values())
-                        candidates = [k for k, v in counts.items() if v == max_count]
-                        pred_answer = candidates[0] if candidates else None
+                    if sc_answers:
+                        counts = Counter(sc_answers)
+                        pred_answer = counts.most_common(1)[0][0]
+                    else:
+                        pred_answer = None
 
                     is_correct = False
-                    if pred_answer is not None and meta["gold_answer"] is not None:
+                    if pred_answer is not None and gold_answer is not None:
                         try:
-                            pred_num = float(pred_answer)
-                            gold_num = float(meta["gold_answer"])
-                            is_correct = abs(pred_num - gold_num) < 1e-7
+                            pred_value = float(pred_answer)
+                            gold_value = float(gold_answer)
+                            is_correct = abs(pred_value - gold_value) < 1e-7
                         except Exception as e:
                             if args.debug:
-                                print(f"Error comparing numeric answers for sample index {meta['sample_index']}: {e}")
+                                print(f"Error comparing numeric answers for sample index {idx}: {e}")
                     if is_correct:
                         correct += 1
                     total += 1
 
-                    model_response_text = "\n".join(model_responses)
                     results.append({
-                        "sample_index": meta["sample_index"],
-                        "prompt": meta["prompt"],
-                        "generated_text": model_response_text,
+                        "sample_index": idx,
+                        "question": question,
+                        "prompt": formatted_prompt,
+                        "generated_text": f"Self-consistency answers: {sc_answers}",
                         "pred_answer": pred_answer,
-                        "gold_answer": meta["gold_answer"],
+                        "gold_answer": gold_answer,
                         "is_correct": is_correct
                     })
-                    
-                    # --- Added debug prints ---
+
                     if args.debug:
-                        print(f"\nResult for sample index {meta['sample_index']}: {'Correct' if is_correct else 'Incorrect'}")
-                        print(f"All self-consistency extracted answers: {answers}")
-                        print(f"Final majority vote answer: {pred_answer}")
-                        print(f"Model responses:\n{model_response_text}")
-                if args.debug:
-                    batch_results = results[-len(batch_meta):]
-                    print(f"\nBatch {start_idx//batch_size + 1} Summary (Self-Consistency):")
-                    print(f"Batch accuracy: {sum(1 for r in batch_results if r['is_correct'])/len(batch_results):.2%}")
-                    print(f"Overall accuracy: {correct/total:.2%}")
-                    print("-" * 50)
+                        print(f"\nSample index {idx}:")
+                        print(f"Prompt: {formatted_prompt}")
+                        print(f"Self-consistency numeric answers: {sc_answers}")
+                        print(f"Predicted numeric answer: {pred_answer}")
+                        print(f"Gold numeric answer: {gold_answer}")
+                        print(f"Correct: {is_correct}")
+
+                except Exception as e:
+                    if args.debug:
+                        print(f"Error processing sample index {idx}: {str(e)}")
         else:
             # --- NUMERIC TASKS Single-Path Branch ---
             for start_idx in tqdm(range(0, max_samples, batch_size), desc=f"Processing {template_name} in batches"):
