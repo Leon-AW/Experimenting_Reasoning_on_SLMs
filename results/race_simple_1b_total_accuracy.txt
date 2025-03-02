@@ -1,4 +1,4 @@
-Final Accuracy of simple on race (self-consistency: False): 47.50%
+Final Accuracy of simple on race: 47.50%
 Total Correct Answers: 475/1000 Questions
 
 Unextracted Answers: 0 samples
