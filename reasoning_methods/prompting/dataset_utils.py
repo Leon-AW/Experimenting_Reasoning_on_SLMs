@@ -147,4 +147,4 @@ def configure_hardware():
         
         print(f"Running on CPU with {total_mem:.1f}GB RAM, batch_size={batch_size}")
         
-        return device, batch_size * 2, 1, max_memory
+        return device, batch_size, 1, max_memory

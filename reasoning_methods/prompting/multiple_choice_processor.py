@@ -1,72 +1,140 @@
 from tqdm import tqdm
 from collections import Counter
 from .prompts import format_prompt
-from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS
+from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS
 import torch
 import numpy as np
 
-def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
+def get_mc_pred_answer_with_cot(prompt, options, model, tokenizer, temperature=TEMPERATURE, 
+                               cot_max_new_tokens=MAX_NEW_TOKENS, cot_min_new_tokens=MIN_NEW_TOKENS):
     """
-    Given a prompt and a list of candidate options, compute the log likelihood
-    of each candidate answer when appended (after an "Answer:" marker) to the prompt.
-    The candidate with the highest log likelihood is returned, converted to
-    its numeric representation (mapping A->"0", B->"1", etc.).
+    Generate a chain-of-thought (CoT) first then append 'Answer:' and compute candidate loglikelihoods for multiple choice.
+    Returns both the predicted answer and the generated CoT text.
     
-    If temperature > 0, introduces randomness for self-consistency sampling.
+    Parameters:
+    - prompt: The input prompt
+    - options: List of answer options
+    - model: The language model
+    - tokenizer: The tokenizer
+    - temperature: Temperature for generation
+    - cot_max_new_tokens: Maximum number of tokens to generate for CoT
+    - cot_min_new_tokens: Minimum number of tokens to generate for CoT
     """
-    # Ensure the prompt ends with an "Answer:" line.
+    # Generate CoT with proper attention mask
+    inputs = tokenizer(prompt, return_tensors="pt", padding=True)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
+    # Set generation parameters
+    generation_kwargs = {
+        "max_new_tokens": cot_max_new_tokens,
+        "min_new_tokens": cot_min_new_tokens,
+        "do_sample": True,
+        "temperature": temperature,
+        "pad_token_id": tokenizer.eos_token_id,
+        "no_repeat_ngram_size": 3  # Prevent repetitive text
+    }
+    
+    output = model.generate(**inputs, **generation_kwargs)
+    generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
+
+    # Ensure the generated text ends with 'Answer:'
+    if not generated_text.strip().endswith("Answer:"):
+        base_context = generated_text.strip() + "\nAnswer:"
+    else:
+        base_context = generated_text.strip()
+
+    # Create candidate letters for options
+    candidate_letters = [chr(65 + i) for i in range(len(options))]
+    scores = {}
+
+    # Tokenize with proper attention mask
+    base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
+    base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
+    base_length = base_inputs["input_ids"].shape[1]
+
+    for letter in candidate_letters:
+        candidate_text = " " + letter
+        full_input = base_context + candidate_text
+        
+        # Tokenize with proper attention mask
+        tokenized = tokenizer(full_input, return_tensors="pt", padding=True)
+        tokenized = {k: v.to(model.device) for k, v in tokenized.items()}
+        
+        candidate_len = tokenized["input_ids"].shape[1] - base_length
+        labels = tokenized["input_ids"].clone()
+        labels[:, :base_length] = -100
+        
+        with torch.no_grad():
+            outputs = model(input_ids=tokenized["input_ids"], 
+                           attention_mask=tokenized["attention_mask"], 
+                           labels=labels)
+
+        loss = outputs.loss.item()
+        total_loss = loss * candidate_len
+        loglikelihood = -total_loss
+        scores[letter] = loglikelihood
+
+    if temperature == 0.0:
+        best_letter = max(scores, key=scores.get)
+    else:
+        logits = np.array([scores[letter] for letter in candidate_letters])
+        logits = logits / temperature
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+        choice_idx = np.random.choice(len(candidate_letters), p=probs)
+        best_letter = candidate_letters[choice_idx]
+    
+    mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+    return mapping.get(best_letter, best_letter), generated_text
+
+def get_mc_pred_answer_simple(prompt, options, model, tokenizer, temperature=0.0):
+    """
+    Berechnet die Loglikelihood für jede Antwortoption, ohne erst CoT zu generieren.
+    """
     if not prompt.strip().endswith("Answer:"):
         base_context = prompt.strip() + "\nAnswer:"
     else:
         base_context = prompt.strip()
         
-    # Create candidate letters corresponding to options (i.e. "A", "B", etc.)
     candidate_letters = [chr(65 + i) for i in range(len(options))]
     scores = {}
     
-    # Pre-tokenize the base context for reuse.
-    base_tokens = tokenizer(base_context, return_tensors="pt").input_ids.to(model.device)
-    base_length = base_tokens.shape[1]
+    # Tokenize with proper attention mask
+    base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
+    base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
+    base_length = base_inputs["input_ids"].shape[1]
     
     for letter in candidate_letters:
-        # Append the candidate letter (with a leading space)
         candidate_text = " " + letter
         full_input = base_context + candidate_text
-        tokenized = tokenizer(full_input, return_tensors="pt").to(model.device)
         
-        # Candidate tokens are those after the base context.
-        candidate_len = tokenized.input_ids.shape[1] - base_length
+        # Tokenize with proper attention mask
+        tokenized = tokenizer(full_input, return_tensors="pt", padding=True)
+        tokenized = {k: v.to(model.device) for k, v in tokenized.items()}
         
-        # Set up the labels so that base context tokens are ignored.
-        labels = tokenized.input_ids.clone()
+        candidate_len = tokenized["input_ids"].shape[1] - base_length
+        labels = tokenized["input_ids"].clone()
         labels[:, :base_length] = -100
         
         with torch.no_grad():
-            outputs = model(tokenized.input_ids, labels=labels)
-        # The loss returned is the average negative log likelihood over candidate tokens;
-        # multiply by candidate token count to get the total (negative) log likelihood.
+            outputs = model(input_ids=tokenized["input_ids"], 
+                           attention_mask=tokenized["attention_mask"], 
+                           labels=labels)
         loss = outputs.loss.item()
         total_loss = loss * candidate_len
-        # Higher log likelihood means lower loss, so we negate.
         loglikelihood = -total_loss  
         scores[letter] = loglikelihood
-
-    # If temperature is 0, just return the highest scoring option
+    
     if temperature == 0.0:
         best_letter = max(scores, key=scores.get)
     else:
-        # Convert scores to probabilities using softmax with temperature
         logits = np.array([scores[letter] for letter in candidate_letters])
-        # Apply temperature scaling
         logits = logits / temperature
-        # Softmax to get probabilities
-        exp_logits = np.exp(logits - np.max(logits))  # Subtract max for numerical stability
+        exp_logits = np.exp(logits - np.max(logits))
         probs = exp_logits / exp_logits.sum()
-        # Sample from the distribution
         choice_idx = np.random.choice(len(candidate_letters), p=probs)
         best_letter = candidate_letters[choice_idx]
     
-    # Convert candidate letter to a numeric string.
     mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
     return mapping.get(best_letter, best_letter)
 
@@ -112,12 +180,18 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
 
             # Run self-consistency paths using log-likelihood with temperature.
             sc_answers = []
+            generated_texts = []
+            
             for _ in range(SELF_CONSISTENCY_PATHS):
-                pred = get_mc_pred_answer(
-                    formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE
-                ) if options else None
-                if pred is not None:
-                    sc_answers.append(pred)
+                if template_name == "simple":
+                    pred = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else None
+                    if pred is not None:
+                        sc_answers.append(pred)
+                else:
+                    pred, gen_text = get_mc_pred_answer_with_cot(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else (None, "")
+                    if pred is not None:
+                        sc_answers.append(pred)
+                        generated_texts.append(gen_text)
 
             # Majority vote of the self-consistency answers.
             if sc_answers:
@@ -134,27 +208,43 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                 correct += 1
             total += 1
 
+            # Store the generated text for the result
+            generated_text_for_result = ""
+            if generated_texts:
+                # Use the first generated text for the result
+                generated_text_for_result = generated_texts[0]
+
             results.append({
                 "sample_index": idx,
                 "question": question,
                 "prompt": formatted_prompt,
-                "generated_text": f"Self-consistency answers: {sc_answers}",
+                "generated_text": generated_text_for_result,
                 "pred_answer": pred_answer,
                 "gold_answer": gold_answer,
                 "is_correct": is_correct
             })
 
             if args.debug:
-                print(f"\nSample index {idx}:")
-                print(f"Prompt: {formatted_prompt}")
+                print(f"\n{'='*80}")
+                print(f"SAMPLE INDEX: {idx}")
+                print(f"{'='*80}")
+                print(f"\n--- PROMPT ---\n{formatted_prompt}")
+                
+                if generated_texts:
+                    print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_texts[0]}")
+                
+                print(f"\n--- RESULTS ---")
                 print(f"Self-consistency answers: {sc_answers}")
                 print(f"Predicted answer: {pred_answer}")
                 print(f"Gold answer: {gold_answer}")
                 print(f"Correct: {is_correct}")
+                print(f"{'='*80}")
 
         except Exception as e:
             if args.debug:
-                print(f"Error processing sample index {idx}: {str(e)}")
+                print(f"\n{'='*80}")
+                print(f"ERROR processing sample index {idx}: {str(e)}")
+                print(f"{'='*80}")
     return correct, total, results
 
 def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mapping):
@@ -195,10 +285,13 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
                 options = example.get("options", [])
 
             formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+            
             # Use single-pass log likelihood scoring.
-            pred_answer = get_mc_pred_answer(
-                formatted_prompt, options, pipe.model, pipe.tokenizer
-            ) if options else None
+            generated_text = ""
+            if template_name == "simple":
+                pred_answer = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else None
+            else:
+                pred_answer, generated_text = get_mc_pred_answer_with_cot(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else (None, "")
 
             is_correct = False
             if pred_answer is not None and gold_answer is not None:
@@ -210,21 +303,32 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
 
             results.append({
                 "sample_index": idx,
+                "question": question,
                 "prompt": formatted_prompt,
-                "generated_text": "",  # No generated text is produced.
+                "generated_text": generated_text,
                 "pred_answer": pred_answer,
                 "gold_answer": gold_answer,
                 "is_correct": is_correct
             })
 
             if args.debug:
-                print(f"\nSample index {idx}:")
-                print(f"Prompt: {formatted_prompt}")
+                print(f"\n{'='*80}")
+                print(f"SAMPLE INDEX: {idx}")
+                print(f"{'='*80}")
+                print(f"\n--- PROMPT ---\n{formatted_prompt}")
+                
+                if generated_text:
+                    print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_text}")
+                
+                print(f"\n--- RESULTS ---")
                 print(f"Predicted answer (log likelihood): {pred_answer}")
                 print(f"Gold answer: {gold_answer}")
                 print(f"Correct: {is_correct}")
+                print(f"{'='*80}")
 
         except Exception as e:
             if args.debug:
-                print(f"Error processing sample index {idx}: {str(e)}")
+                print(f"\n{'='*80}")
+                print(f"ERROR processing sample index {idx}: {str(e)}")
+                print(f"{'='*80}")
     return correct, total, results 

@@ -1,4 +1,4 @@
-Final Accuracy of simple on race (self-consistency: False): 47.50%
+Final Accuracy of simple on race: 47.50%
 Total Correct Answers: 475/1000 Questions
 
 Unextracted Answers: 0 samples
@@ -9,7 +9,7 @@ Batch Size: 53
 Number of GPUs: 4
 Max Memory per GPU: {0: 40000000000, 1: 40000000000, 2: 40000000000, 3: 40000000000, 'cpu': 2000000000}
 Min New Tokens: 1
-Max New Tokens: 256
+Max New Tokens: 128
 Temperature: 0.7
 Top P: 0.9
 Top K: 0
