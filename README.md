@@ -12,7 +12,7 @@ The experiment evaluates LLaMA-3 models (1B and 3B) on various mathematical and 
 
 ## Project Structure
 
-- `models/reasoning_methods/prompting/`: Directory containing the main script and supporting files.
+- `reasoning_methods/prompting/`: Directory containing the main script and supporting files.
 - `requirements.txt`: List of dependencies required to run the project.
 
 ## Supported Datasets
@@ -81,8 +81,8 @@ accelerate>=0.26.0
      - Options: ['gsm8k', 'race', 'arc', 'mmlu', 'drop', 'agieval'] (See `config.py` startLine: 15 endLine: 59 for configuration details)
    - `--model_size`: Specify LLaMA-3 model size (default: '1b')
      - Options: ['1b', '3b'] (See `main.py` startLine: 34 endLine: 36)
-   - `--debug`: Enable debug mode for detailed output (optional) (See `main.py` startLine: 32 endLine: 33 and `evaluator.py` startLine: 142 endLine: 148, startLine: 150 endLine: 151, startLine: 153 endLine: 155, startLine: 189 endLine: 190, startLine: 206 endLine: 207, startLine: 232 endLine: 234, startLine: 250 endLine: 251, startLine: 265 endLine: 272, startLine: 301 endLine: 303, startLine: 318 endLine: 320, startLine: 333 endLine: 339, startLine: 347 endLine: 348, startLine: 362 endLine: 371)
-   - `--self_consistency`: Enable self-consistency with multiple paths (optional). Uses 20 paths by default. (See `main.py` startLine: 37 endLine: 39 and `config.py` startLine: 12 and `evaluator.py` startLine: 160 endLine: 273)
+   - `--debug`: Enable debug mode for detailed output (optional) (See `main.py` startLine: 32 endLine: 33 and the processor files for implementation details)
+   - `--self_consistency`: Enable self-consistency with multiple paths (optional). Uses 20 paths by default. (See `main.py` startLine: 37 endLine: 39 and `config.py` startLine: 12 and the processor files for implementation)
 
    ### Example Commands
    ```bash
@@ -140,7 +140,7 @@ The code implements four different prompting strategies, configurable in `config
 
 ## Self-Consistency
 
-The project supports self-consistency sampling, which generates multiple reasoning paths and selects the most common answer. This can improve performance on reasoning tasks, especially for Chain-of-Thought prompting. (See `README.md` startLine: 129 endLine: 137 and `evaluator.py` startLine: 160 endLine: 273)
+The project supports self-consistency sampling, which generates multiple reasoning paths and selects the most common answer. This can improve performance on reasoning tasks, especially for Chain-of-Thought prompting.
 
 When enabled with the `--self_consistency` flag, the system will:
 - Generate multiple reasoning paths (default: 20 paths, configurable in `config.py` startLine: 12)
@@ -151,16 +151,18 @@ When enabled with the `--self_consistency` flag, the system will:
 
 ```
 .
-├── models/
-│   └── reasoning_methods/
-│       └── prompting/
-│           ├── __init__.py
-│           ├── answer_extraction.py
-│           ├── config.py
-│           ├── dataset_utils.py
-│           ├── evaluator.py
-│           ├── main.py
-│           └── prompts.py
+├── reasoning_methods/
+│   ├── __init__.py
+│   └── prompting/
+│       ├── __init__.py
+│       ├── answer_extraction.py
+│       ├── config.py
+│       ├── dataset_utils.py
+│       ├── main.py
+│       ├── multiple_choice_processor.py
+│       ├── numeric_processor.py
+│       ├── process_dataset_batch.py
+│       └── prompts.py
 ├── results/
 │   ├── {dataset}_{template}_{model_size}{_sc[paths]}_results.csv
 │   └── {dataset}_{template}_{model_size}{_sc[paths]}_total_accuracy.txt
@@ -170,7 +172,7 @@ When enabled with the `--self_consistency` flag, the system will:
 
 ## Notes
 
-- Ensure sufficient GPU memory for model loading, especially for larger models and batch sizes. (See `dataset_utils.py` startLine: 64 endLine: 92 for hardware configuration and batch size details)
+- Ensure sufficient GPU memory for model loading, especially for larger models and batch sizes. (See `dataset_utils.py` for hardware configuration and batch size details)
 - Results are saved automatically in the `results` directory.
 - Debug mode might slow down execution but provides detailed insights into the evaluation process.
 - Different datasets might require different evaluation metrics and prompt adjustments for optimal performance.

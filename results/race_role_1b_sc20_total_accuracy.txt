@@ -1,5 +1,5 @@
-Final Accuracy of simple on arc (self-consistency: False): 41.10%
-Total Correct Answers: 411/1000 Questions
+Final Accuracy of role on race (self-consistency: True): 39.60%
+Total Correct Answers: 396/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -15,6 +15,7 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: False
+Self Consistency: True
+Self Consistency Paths: 20
 Device: cuda
 Random Seed: 42

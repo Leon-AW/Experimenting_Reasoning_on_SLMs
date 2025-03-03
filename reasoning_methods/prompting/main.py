@@ -24,7 +24,7 @@ from reasoning_methods.prompting.config import (
     NUM_RETURN_SEQUENCES
 )
 from reasoning_methods.prompting.dataset_utils import configure_hardware, load_custom_dataset
-from reasoning_methods.prompting.evaluator import process_dataset_batch
+from reasoning_methods.prompting.process_dataset_batch import process_dataset_batch
 
 def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batch_size, model_name, device, num_gpus, max_memory):
     """Run a single experiment (one dataset + one template with given self-consistency flag)
