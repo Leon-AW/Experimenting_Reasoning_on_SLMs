@@ -140,195 +140,229 @@ def get_mc_pred_answer_simple(prompt, options, model, tokenizer, temperature=0.0
 
 def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indices, mapping):
     """
-    Process multiple-choice datasets using self-consistency.
-    Loops over sample_indices and obtains multiple self-consistent answers via log-likelihood scoring.
+    Process multiple-choice datasets using self-consistency with proper batching.
+    Each batch processes a set of samples, with each sample going through all self-consistency paths.
     """
     correct = 0
     total = 0
     results = []
+    
+    # Process in batches
+    for i in range(0, len(sample_indices), args.batch_size):
+        batch_indices = sample_indices[i:i+args.batch_size]
+        batch_results = []
+        
+        # Process each sample in the batch
+        for idx in tqdm(batch_indices, desc=f"Processing batch {i//args.batch_size + 1}/{(len(sample_indices) + args.batch_size - 1)//args.batch_size} (Self-Consistency)"):
+            try:
+                example = dataset[idx]
+                question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
+                gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-    for idx in tqdm(sample_indices, desc=f"Processing {template_name} (Self-Consistency Log Likelihood)"):
-        try:
-            example = dataset[idx]
-            question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-            gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+                # Normalize the gold_answer to numeric if it is given as letter.
+                if gold_answer.upper() in mapping:
+                    gold_answer = mapping[gold_answer.upper()]
 
-            # Normalize the gold_answer to numeric if it is given as letter.
-            if gold_answer.upper() in mapping:
-                gold_answer = mapping[gold_answer.upper()]
-
-            # Get available options and (if available) passage context.
-            options = None
-            passage = None
-            if args.dataset == "race":
-                options = example.get("options", [])
-                passage = example.get("article", "") or example.get("passage", "")
-            elif args.dataset == "arc":
-                choices = example.get("choices", {})
-                if isinstance(choices, dict) and "text" in choices:
-                    options = choices["text"]
-                else:
-                    continue
-            elif args.dataset == "mmlu":
-                options = example.get("choices")
-                if not options:
-                    options = [example.get(f"choice_{i}", "") for i in range(4)]
-            elif args.dataset == "agieval":
-                options = example.get("options", [])
-            
-            formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-
-            # Run self-consistency paths using log-likelihood with temperature.
-            sc_answers = []
-            generated_texts = []
-            
-            for _ in range(SELF_CONSISTENCY_PATHS):
-                if template_name == "simple":
-                    pred = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else None
-                    if pred is not None:
-                        sc_answers.append(pred)
-                else:
-                    pred, gen_text = get_mc_pred_answer_with_cot(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else (None, "")
-                    if pred is not None:
-                        sc_answers.append(pred)
-                        generated_texts.append(gen_text)
-
-            # Majority vote of the self-consistency answers.
-            if sc_answers:
-                counts = Counter(sc_answers)
-                pred_answer = counts.most_common(1)[0][0]
-            else:
-                pred_answer = None
-
-            is_correct = False
-            if pred_answer is not None and gold_answer is not None:
-                is_correct = str(pred_answer).upper() == str(gold_answer).upper()
-
-            if is_correct:
-                correct += 1
-            total += 1
-
-            # Store the generated text for the result
-            generated_text_for_result = ""
-            if generated_texts:
-                # Use the first generated text for the result
-                generated_text_for_result = generated_texts[0]
-
-            results.append({
-                "sample_index": idx,
-                "question": question,
-                "prompt": formatted_prompt,
-                "generated_text": generated_text_for_result,
-                "pred_answer": pred_answer,
-                "gold_answer": gold_answer,
-                "is_correct": is_correct
-            })
-
-            if args.debug:
-                print(f"\n{'='*80}")
-                print(f"SAMPLE INDEX: {idx}")
-                print(f"{'='*80}")
-                print(f"\n--- PROMPT ---\n{formatted_prompt}")
+                # Get available options and (if available) passage context.
+                options = None
+                passage = None
+                if args.dataset == "race":
+                    options = example.get("options", [])
+                    passage = example.get("article", "") or example.get("passage", "")
+                elif args.dataset == "arc":
+                    choices = example.get("choices", {})
+                    if isinstance(choices, dict) and "text" in choices:
+                        options = choices["text"]
+                    else:
+                        continue
+                elif args.dataset == "mmlu":
+                    options = example.get("choices")
+                    if not options:
+                        options = [example.get(f"choice_{i}", "") for i in range(4)]
+                elif args.dataset == "agieval":
+                    options = example.get("options", [])
                 
+                formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+
+                # Run self-consistency paths using log-likelihood with temperature.
+                sc_answers = []
+                generated_texts = []
+                
+                for _ in range(SELF_CONSISTENCY_PATHS):
+                    if template_name == "simple":
+                        pred = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else None
+                        if pred is not None:
+                            sc_answers.append(pred)
+                    else:
+                        pred, gen_text = get_mc_pred_answer_with_cot(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else (None, "")
+                        if pred is not None:
+                            sc_answers.append(pred)
+                            generated_texts.append(gen_text)
+
+                # Majority vote of the self-consistency answers.
+                if sc_answers:
+                    counts = Counter(sc_answers)
+                    pred_answer = counts.most_common(1)[0][0]
+                else:
+                    pred_answer = None
+
+                is_correct = False
+                if pred_answer is not None and gold_answer is not None:
+                    is_correct = str(pred_answer).upper() == str(gold_answer).upper()
+
+                if is_correct:
+                    correct += 1
+                total += 1
+
+                # Store the generated text for the result
+                generated_text_for_result = ""
                 if generated_texts:
-                    print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_texts[0]}")
-                
-                print(f"\n--- RESULTS ---")
-                print(f"Self-consistency answers: {sc_answers}")
-                print(f"Predicted answer: {pred_answer}")
-                print(f"Gold answer: {gold_answer}")
-                print(f"Correct: {is_correct}")
-                print(f"{'='*80}")
+                    # Use the first generated text for the result
+                    generated_text_for_result = generated_texts[0]
 
-        except Exception as e:
-            if args.debug:
-                print(f"\n{'='*80}")
-                print(f"ERROR processing sample index {idx}: {str(e)}")
-                print(f"{'='*80}")
+                result = {
+                    "sample_index": idx,
+                    "question": question,
+                    "prompt": formatted_prompt,
+                    "generated_text": generated_text_for_result,
+                    "pred_answer": pred_answer,
+                    "gold_answer": gold_answer,
+                    "is_correct": is_correct
+                }
+                
+                batch_results.append(result)
+                results.append(result)
+
+                if args.debug:
+                    print(f"\n{'='*80}")
+                    print(f"SAMPLE INDEX: {idx}")
+                    print(f"{'='*80}")
+                    print(f"\n--- PROMPT ---\n{formatted_prompt}")
+                    
+                    if generated_texts:
+                        print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_texts[0]}")
+                    
+                    print(f"\n--- RESULTS ---")
+                    print(f"Self-consistency answers: {sc_answers}")
+                    print(f"Predicted answer: {pred_answer}")
+                    print(f"Gold answer: {gold_answer}")
+                    print(f"Correct: {is_correct}")
+                    print(f"{'='*80}")
+
+            except Exception as e:
+                if args.debug:
+                    print(f"\n{'='*80}")
+                    print(f"ERROR processing sample index {idx}: {str(e)}")
+                    print(f"{'='*80}")
+        
+        # Print batch summary if debug is enabled
+        if args.debug and batch_results:
+            batch_correct = sum(1 for r in batch_results if r["is_correct"])
+            batch_total = len(batch_results)
+            batch_acc = batch_correct / batch_total if batch_total else 0
+            print(f"\nBatch {i//args.batch_size + 1} Accuracy: {batch_acc:.2%} ({batch_correct}/{batch_total})")
+    
     return correct, total, results
 
 def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mapping):
     """
-    Process multiple-choice datasets without self-consistency.
-    For each sample, use log-likelihood scoring once to pick the candidate answer.
+    Process multiple-choice datasets without self-consistency using batching.
+    Each batch processes a set of samples in parallel.
     """
     correct = 0
     total = 0
     results = []
 
-    for idx in tqdm(sample_indices, desc=f"Processing {template_name} (Log Likelihood)"):
-        try:
-            example = dataset[idx]
-            question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-            gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+    # Process in batches
+    for i in range(0, len(sample_indices), args.batch_size):
+        batch_indices = sample_indices[i:i+args.batch_size]
+        batch_results = []
+        
+        # Process each sample in the batch
+        for idx in tqdm(batch_indices, desc=f"Processing batch {i//args.batch_size + 1}/{(len(sample_indices) + args.batch_size - 1)//args.batch_size}"):
+            try:
+                example = dataset[idx]
+                question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
+                gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-            # Normalize the gold_answer to numeric.
-            if gold_answer.upper() in mapping:
-                gold_answer = mapping[gold_answer.upper()]
+                # Normalize the gold_answer to numeric.
+                if gold_answer.upper() in mapping:
+                    gold_answer = mapping[gold_answer.upper()]
 
-            options = None
-            passage = None
-            if args.dataset == "race":
-                options = example.get("options", [])
-                passage = example.get("article", "") or example.get("passage", "")
-            elif args.dataset == "arc":
-                choices = example.get("choices", {})
-                if isinstance(choices, dict) and "text" in choices:
-                    options = choices["text"]
+                options = None
+                passage = None
+                if args.dataset == "race":
+                    options = example.get("options", [])
+                    passage = example.get("article", "") or example.get("passage", "")
+                elif args.dataset == "arc":
+                    choices = example.get("choices", {})
+                    if isinstance(choices, dict) and "text" in choices:
+                        options = choices["text"]
+                    else:
+                        continue
+                elif args.dataset == "mmlu":
+                    options = example.get("choices")
+                    if not options:
+                        options = [example.get(f"choice_{i}", "") for i in range(4)]
+                elif args.dataset == "agieval":
+                    options = example.get("options", [])
+
+                formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+                
+                # Use single-pass log likelihood scoring.
+                generated_text = ""
+                if template_name == "simple":
+                    pred_answer = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else None
                 else:
-                    continue
-            elif args.dataset == "mmlu":
-                options = example.get("choices")
-                if not options:
-                    options = [example.get(f"choice_{i}", "") for i in range(4)]
-            elif args.dataset == "agieval":
-                options = example.get("options", [])
+                    pred_answer, generated_text = get_mc_pred_answer_with_cot(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else (None, "")
 
-            formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-            
-            # Use single-pass log likelihood scoring.
-            generated_text = ""
-            if template_name == "simple":
-                pred_answer = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else None
-            else:
-                pred_answer, generated_text = get_mc_pred_answer_with_cot(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else (None, "")
+                is_correct = False
+                if pred_answer is not None and gold_answer is not None:
+                    is_correct = str(pred_answer).upper() == str(gold_answer).upper()
 
-            is_correct = False
-            if pred_answer is not None and gold_answer is not None:
-                is_correct = str(pred_answer).upper() == str(gold_answer).upper()
+                if is_correct:
+                    correct += 1
+                total += 1
 
-            if is_correct:
-                correct += 1
-            total += 1
-
-            results.append({
-                "sample_index": idx,
-                "question": question,
-                "prompt": formatted_prompt,
-                "generated_text": generated_text,
-                "pred_answer": pred_answer,
-                "gold_answer": gold_answer,
-                "is_correct": is_correct
-            })
-
-            if args.debug:
-                print(f"\n{'='*80}")
-                print(f"SAMPLE INDEX: {idx}")
-                print(f"{'='*80}")
-                print(f"\n--- PROMPT ---\n{formatted_prompt}")
+                result = {
+                    "sample_index": idx,
+                    "question": question,
+                    "prompt": formatted_prompt,
+                    "generated_text": generated_text,
+                    "pred_answer": pred_answer,
+                    "gold_answer": gold_answer,
+                    "is_correct": is_correct
+                }
                 
-                if generated_text:
-                    print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_text}")
-                
-                print(f"\n--- RESULTS ---")
-                print(f"Predicted answer (log likelihood): {pred_answer}")
-                print(f"Gold answer: {gold_answer}")
-                print(f"Correct: {is_correct}")
-                print(f"{'='*80}")
+                batch_results.append(result)
+                results.append(result)
 
-        except Exception as e:
-            if args.debug:
-                print(f"\n{'='*80}")
-                print(f"ERROR processing sample index {idx}: {str(e)}")
-                print(f"{'='*80}")
+                if args.debug:
+                    print(f"\n{'='*80}")
+                    print(f"SAMPLE INDEX: {idx}")
+                    print(f"{'='*80}")
+                    print(f"\n--- PROMPT ---\n{formatted_prompt}")
+                    
+                    if generated_text:
+                        print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_text}")
+                    
+                    print(f"\n--- RESULTS ---")
+                    print(f"Predicted answer (log likelihood): {pred_answer}")
+                    print(f"Gold answer: {gold_answer}")
+                    print(f"Correct: {is_correct}")
+                    print(f"{'='*80}")
+
+            except Exception as e:
+                if args.debug:
+                    print(f"\n{'='*80}")
+                    print(f"ERROR processing sample index {idx}: {str(e)}")
+                    print(f"{'='*80}")
+        
+        # Print batch summary if debug is enabled
+        if args.debug and batch_results:
+            batch_correct = sum(1 for r in batch_results if r["is_correct"])
+            batch_total = len(batch_results)
+            batch_acc = batch_correct / batch_total if batch_total else 0
+            print(f"\nBatch {i//args.batch_size + 1} Accuracy: {batch_acc:.2%} ({batch_correct}/{batch_total})")
+    
     return correct, total, results 

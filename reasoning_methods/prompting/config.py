@@ -13,13 +13,13 @@ SELF_CONSISTENCY_PATHS = 20
 
 # Dataset configurations
 DATASET_CONFIGS = {
-    # "gsm8k": {
-    #     "name": "gsm8k",
-    #     "split": "main",
-    #     "subset": "test",
-    #     "question_key": "question",
-    #     "answer_key": "answer"
-    # },
+    "gsm8k": {
+        "name": "gsm8k",
+        "split": "main",
+        "subset": "test",
+        "question_key": "question",
+        "answer_key": "answer"
+    },
     "race": {
         "name": "race",
         "split": "high",

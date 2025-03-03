@@ -31,6 +31,9 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
     # A mapping for answer normalization.
     mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
 
+    # Store batch_size in args for access in processor functions
+    args.batch_size = batch_size
+
     if args.dataset in multiple_choice_datasets:
         # Multiple Choice Processing
         if args.self_consistency:
