@@ -215,25 +215,14 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                         "do_sample": True,
                         "temperature": TEMPERATURE,
                         "pad_token_id": pipe.tokenizer.eos_token_id,
-                        "no_repeat_ngram_size": 3,  # Prevent repetitive text
-                        "num_return_sequences": SELF_CONSISTENCY_PATHS
+                        "no_repeat_ngram_size": 3  # Prevent repetitive text
                     }
                     
-                    # Generate all paths at once
-                    with torch.no_grad():
-                        # Expand inputs for multiple sequences
-                        expanded_inputs = {
-                            k: v.repeat(SELF_CONSISTENCY_PATHS, 1) if v.dim() == 2 else v
-                            for k, v in inputs.items()
-                        }
-                        
-                        outputs = pipe.model.generate(**expanded_inputs, **generation_kwargs)
-                        
-                        # Process each generated sequence
-                        for i in range(SELF_CONSISTENCY_PATHS):
-                            # Get the i-th sequence
-                            output_seq = outputs[i]
-                            generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
+                    # Generate paths sequentially but efficiently
+                    for _ in range(SELF_CONSISTENCY_PATHS):
+                        with torch.no_grad():
+                            output = pipe.model.generate(**inputs, **generation_kwargs)
+                            generated_text = pipe.tokenizer.decode(output[0], skip_special_tokens=True)
                             generated_texts.append(generated_text)
 
                             # Ensure the generated text ends with 'Answer:'
