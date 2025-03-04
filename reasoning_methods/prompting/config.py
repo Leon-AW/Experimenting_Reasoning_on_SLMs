@@ -2,7 +2,7 @@
 
 # Constants and hyperparameters
 MIN_NEW_TOKENS = 1
-MAX_NEW_TOKENS = 128
+MAX_NEW_TOKENS = 256
 TEMPERATURE = 0.7
 SEED = 42
 TOP_P = 0.9

@@ -9,7 +9,7 @@ Batch Size: 53
 Number of GPUs: 4
 Max Memory per GPU: {0: 40000000000, 1: 40000000000, 2: 40000000000, 3: 40000000000, 'cpu': 2000000000}
 Min New Tokens: 1
-Max New Tokens: 128
+Max New Tokens: 256
 Temperature: 0.7
 Top P: 0.9
 Top K: 0

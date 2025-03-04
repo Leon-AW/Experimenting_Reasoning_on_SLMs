@@ -2,6 +2,7 @@ from tqdm import tqdm
 from .answer_extraction import extract_numeric_answer, extract_gold_gsm8k_answer
 from .prompts import format_prompt
 from .config import DATASET_CONFIGS, MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, SELF_CONSISTENCY_PATHS, TOP_P, TOP_K, DO_SAMPLE, NUM_RETURN_SEQUENCES
+import torch
 
 def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_indices):
     """
@@ -45,35 +46,43 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                 options = None
                 formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
 
-                # Create multiple copies of the same prompt for self-consistency
-                sc_prompts = [formatted_prompt] * SELF_CONSISTENCY_PATHS
+                # Create inputs for the model
+                inputs = pipe.tokenizer(formatted_prompt, return_tensors="pt", padding=True)
+                inputs = {k: v.to(pipe.model.device) for k, v in inputs.items()}
+                
+                # Set generation parameters for multiple sequences
+                generation_kwargs = {
+                    "min_new_tokens": MIN_NEW_TOKENS,
+                    "max_new_tokens": MAX_NEW_TOKENS,
+                    "temperature": TEMPERATURE,
+                    "top_p": TOP_P,
+                    "top_k": TOP_K,
+                    "do_sample": DO_SAMPLE,
+                    "num_return_sequences": SELF_CONSISTENCY_PATHS,
+                    "pad_token_id": pipe.tokenizer.eos_token_id
+                }
                 
                 try:
-                    # Process all self-consistency paths in a single batch call
-                    outputs = pipe(
-                        sc_prompts,
-                        min_new_tokens=MIN_NEW_TOKENS,
-                        max_new_tokens=MAX_NEW_TOKENS,
-                        temperature=TEMPERATURE,
-                        top_p=TOP_P,
-                        top_k=TOP_K,
-                        do_sample=DO_SAMPLE,
-                        num_return_sequences=1,
-                        pad_token_id=pipe.tokenizer.eos_token_id
-                    )
-                    
-                    sc_answers = []
-                    for output in outputs:
-                        if isinstance(output, list) and len(output) > 0 and isinstance(output[0], dict):
-                            generated_text = output[0].get('generated_text', '')
-                        else:
-                            generated_text = output.get("generated_text", "") if isinstance(output, dict) else str(output)
+                    # Generate all self-consistency paths at once
+                    with torch.no_grad():
+                        # Expand inputs for multiple sequences
+                        expanded_inputs = {
+                            k: v.repeat(SELF_CONSISTENCY_PATHS, 1) if v.dim() == 2 else v
+                            for k, v in inputs.items()
+                        }
                         
-                        if generated_text:
-                            model_response = generated_text[len(formatted_prompt):].strip()
-                            numeric_extracted = extract_numeric_answer(model_response)
-                            if numeric_extracted is not None:
-                                sc_answers.append(str(int(numeric_extracted)))
+                        outputs = pipe.model.generate(**expanded_inputs, **generation_kwargs)
+                        
+                        sc_answers = []
+                        for i in range(SELF_CONSISTENCY_PATHS):
+                            output_seq = outputs[i, :]
+                            generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
+                            
+                            if generated_text:
+                                model_response = generated_text[len(formatted_prompt):].strip()
+                                numeric_extracted = extract_numeric_answer(model_response)
+                                if numeric_extracted is not None:
+                                    sc_answers.append(str(int(numeric_extracted)))
                 
                 except Exception as inner_e:
                     if args.debug:
@@ -152,7 +161,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
         batch_correct = 0 
         
         # Prepare all prompts for the batch
-        for idx in batch_indices:
+        for idx in tqdm(batch_indices, desc=f"Preparing batch {i//args.batch_size + 1}/{(max_samples + args.batch_size - 1)//args.batch_size}"):
             try:
                 example = dataset[idx]
                 question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
@@ -196,34 +205,44 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
         if not batch_prompts:
             continue
         
-        # Process the batch of prompts in parallel
+        # Process the batch of prompts in parallel using the model directly
         try:
-            outputs = pipe(
-                batch_prompts,
-                min_new_tokens=MIN_NEW_TOKENS,
-                max_new_tokens=MAX_NEW_TOKENS,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                top_k=TOP_K,
-                do_sample=DO_SAMPLE,
-                num_return_sequences=NUM_RETURN_SEQUENCES,
-                pad_token_id=pipe.tokenizer.eos_token_id
-            )
+            # Tokenize all prompts in the batch
+            inputs = pipe.tokenizer(batch_prompts, return_tensors="pt", padding=True)
+            inputs = {k: v.to(pipe.model.device) for k, v in inputs.items()}
+            
+            # Set generation parameters
+            generation_kwargs = {
+                "min_new_tokens": MIN_NEW_TOKENS,
+                "max_new_tokens": MAX_NEW_TOKENS,
+                "temperature": TEMPERATURE,
+                "top_p": TOP_P,
+                "top_k": TOP_K,
+                "do_sample": DO_SAMPLE,
+                "pad_token_id": pipe.tokenizer.eos_token_id
+            }
+            
+            # Generate outputs for all prompts in the batch
+            with torch.no_grad():
+                outputs = pipe.model.generate(**inputs, **generation_kwargs)
+                
+                # Decode all outputs
+                generated_texts = pipe.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         except Exception as e:
             if args.debug:
                 print(f"Error in batch processing for samples {i} to {min(i + args.batch_size, max_samples)-1}: {str(e)}")
             continue
 
         # Process the results for each example in the batch
-        for j, output in enumerate(outputs):
+        for j, generated_text in enumerate(tqdm(generated_texts, desc=f"Processing results for batch {i//args.batch_size + 1}/{(max_samples + args.batch_size - 1)//args.batch_size}")):
+            if j >= len(batch_examples):
+                continue
+                
             idx = batch_examples[j]["sample_index"]
             formatted_prompt = batch_examples[j]["prompt"]
-            if isinstance(output, list) and len(output) > 0 and isinstance(output[0], dict):
-                generated_text = output[0].get('generated_text', '')
-            else:
-                generated_text = output.get("generated_text", "") if isinstance(output, dict) else str(output)
 
             if generated_text:
+                # Extract the model response by removing the prompt
                 model_response = generated_text[len(formatted_prompt):].strip()
                 pred_answer = extract_numeric_answer(model_response)
                 
