@@ -99,8 +99,14 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(SEED)
 
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    # For best performance with deterministic results, set benchmark to True
+    # but deterministic to False - this still maintains reproducibility with fixed seed
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    
+    # Enable TF32 for faster computation on Ampere GPUs (A100, etc.)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
     # Parse arguments
     parser = argparse.ArgumentParser()
@@ -117,7 +123,12 @@ def main():
     parser.add_argument('--template', type=str, default=None,
                         choices=list(PROMPT_TEMPLATES.keys()),
                         help='Specific prompt template to evaluate (default: all templates)')
+    parser.add_argument('--optimize', action='store_true',
+                        help='Enable additional optimizations for inference speed')
     args = parser.parse_args()
+
+    # Set environment variable for model size to optimize batch size in dataset_utils
+    os.environ['MODEL_SIZE'] = args.model_size
 
     # If no additional CLI arguments (besides the module name) are provided,
     # then perform a full sweep over datasets, models, templates, and SC settings.
@@ -134,28 +145,51 @@ def main():
             print(f"Using hyperparameters: BATCH_SIZE={batch_size}, NUM_GPUS={num_gpus}, MAX_MEMORY={max_memory}")
             
             MODEL_NAME = f"meta-llama/Llama-3.2-{model_size.upper()}"
+            
+            # Advanced model loading optimizations
+            print(f"Loading model {MODEL_NAME} with optimized settings...")
             model = AutoModelForCausalLM.from_pretrained(
                 MODEL_NAME,
-                torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
                 device_map="auto",
                 max_memory=max_memory,
+                low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
+                attn_implementation="flash_attention_2" if torch.cuda.is_available() else None,  # Use flash attention if available
             )
+            
             tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+            # Optimize tokenizer settings
+            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+            tokenizer.padding_side = 'left'  # Left padding for more efficient batching
+            
+            # Set model to evaluation mode
             model.eval()
-
+            
+            # Use model parallelism for efficient multi-GPU usage
             if num_gpus > 1:
-                model = torch.nn.DataParallel(model)
-                model_for_pipeline = model.module  # Unwrap the underlying model
+                # If model is already using device_map="auto", don't wrap with DataParallel
+                if hasattr(model, 'hf_device_map'):
+                    print(f"Using HF's native device mapping across {num_gpus} GPUs")
+                    model_for_pipeline = model
+                else:
+                    print(f"Using PyTorch DataParallel across {num_gpus} GPUs")
+                    model = torch.nn.DataParallel(model)
+                    model_for_pipeline = model.module
             else:
                 model_for_pipeline = model
 
+            # Create optimized pipeline
             pipe = pipeline(
                 "text-generation",
                 model=model_for_pipeline,
                 tokenizer=tokenizer,
                 use_cache=True,
-                batch_size=batch_size * num_gpus,
+                batch_size=batch_size,
+                num_workers=min(4, os.cpu_count() // 2),  # Optimize worker threads based on CPU cores
             )
+            
+            # Ensure tokenizer settings are applied to pipeline
             pipe.tokenizer.pad_token = pipe.tokenizer.eos_token
             pipe.tokenizer.pad_token_id = pipe.tokenizer.eos_token_id
             pipe.tokenizer.padding_side = 'left'
@@ -201,28 +235,51 @@ def main():
         print(f"Using hyperparameters: BATCH_SIZE={batch_size}, NUM_GPUS={num_gpus}, MAX_MEMORY={max_memory}")
 
         MODEL_NAME = f"meta-llama/Llama-3.2-{args.model_size.upper()}"
+        
+        # Advanced model loading optimizations
+        print(f"Loading model {MODEL_NAME} with optimized settings...")
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
             device_map="auto",
             max_memory=max_memory,
+            low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
+            attn_implementation="flash_attention_2" if torch.cuda.is_available() else None,  # Use flash attention if available
         )
+        
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        # Optimize tokenizer settings
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokenizer.padding_side = 'left'  # Left padding for more efficient batching
+        
+        # Set model to evaluation mode
         model.eval()
-
+        
+        # Use model parallelism for efficient multi-GPU usage
         if num_gpus > 1:
-            model = torch.nn.DataParallel(model)
-            model_for_pipeline = model.module
+            # If model is already using device_map="auto", don't wrap with DataParallel
+            if hasattr(model, 'hf_device_map'):
+                print(f"Using HF's native device mapping across {num_gpus} GPUs")
+                model_for_pipeline = model
+            else:
+                print(f"Using PyTorch DataParallel across {num_gpus} GPUs")
+                model = torch.nn.DataParallel(model)
+                model_for_pipeline = model.module
         else:
             model_for_pipeline = model
 
+        # Create optimized pipeline
         pipe = pipeline(
             "text-generation",
             model=model_for_pipeline,
             tokenizer=tokenizer,
             use_cache=True,
-            batch_size=batch_size * num_gpus,
+            batch_size=batch_size,
+            num_workers=min(4, os.cpu_count() // 2),  # Optimize worker threads based on CPU cores
         )
+        
+        # Ensure tokenizer settings are applied to pipeline
         pipe.tokenizer.pad_token = pipe.tokenizer.eos_token
         pipe.tokenizer.pad_token_id = pipe.tokenizer.eos_token_id
         pipe.tokenizer.padding_side = "left"

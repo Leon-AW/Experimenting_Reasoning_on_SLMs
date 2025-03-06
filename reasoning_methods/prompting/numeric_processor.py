@@ -3,28 +3,50 @@ from .answer_extraction import extract_numeric_answer, extract_gold_gsm8k_answer
 from .prompts import format_prompt
 from .config import DATASET_CONFIGS, MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, SELF_CONSISTENCY_PATHS, TOP_P, TOP_K, DO_SAMPLE, NUM_RETURN_SEQUENCES
 import torch
+from collections import Counter
+import math
 
 def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_indices):
     """
-    Process numeric datasets (e.g., GSM8K, DROP) using self-consistency with proper batching.
-    Each batch processes a set of samples, with each sample going through all self-consistency paths.
+    Process numeric datasets (e.g., GSM8K, DROP) using self-consistency with efficient batching.
+    Optimized to generate multiple paths at once and process in parallel for maximum performance.
     """
     correct = 0
     total = 0
     results = []
-
-    # Process in batches
-    for i in range(0, len(sample_indices), args.batch_size):
-        batch_indices = sample_indices[i:i+args.batch_size]
+    
+    # Determine efficient batch size for self-consistency paths
+    # We need to balance: (original batch size) * (paths per sample)
+    # For A100s, optimize batch size based on VRAM
+    if torch.cuda.is_available() and any("A100" in torch.cuda.get_device_properties(i).name for i in range(torch.cuda.device_count())):
+        # A100 optimization - we can process more samples at once
+        # Efficiently uses large VRAM while avoiding OOM errors
+        effective_paths_per_batch = min(SELF_CONSISTENCY_PATHS, 5)  # Process 5 paths at once by default on A100s
+        samples_per_batch = max(1, args.batch_size // effective_paths_per_batch)
+    else:
+        # Conservative settings for other GPUs
+        effective_paths_per_batch = min(SELF_CONSISTENCY_PATHS, 2)  # Process 2 paths at once for other GPUs
+        samples_per_batch = max(1, args.batch_size // effective_paths_per_batch)
+    
+    # Process in batches of samples
+    num_batches = math.ceil(len(sample_indices) / samples_per_batch)
+    
+    for batch_idx in range(num_batches):
+        batch_start = batch_idx * samples_per_batch
+        batch_end = min((batch_idx + 1) * samples_per_batch, len(sample_indices))
+        batch_indices = sample_indices[batch_start:batch_end]
+        
+        print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
+        
+        # For each sample in the batch, generate multiple paths efficiently
         batch_results = []
         
-        # Process each sample in the batch
-        for idx in tqdm(batch_indices, desc=f"Processing batch {i//args.batch_size + 1}/{(len(sample_indices) + args.batch_size - 1)//args.batch_size} (Self-Consistency Numeric)"):
+        for sample_idx in batch_indices:
             try:
-                example = dataset[idx]
+                example = dataset[sample_idx]
                 question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-
-                # Handle DROP dataset specially.
+                
+                # Handle DROP dataset specially
                 if args.dataset == "drop":
                     answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
                     if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
@@ -45,171 +67,37 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
 
                 options = None
                 formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-
-                # Create inputs for the model
-                inputs = pipe.tokenizer(formatted_prompt, return_tensors="pt", padding=True)
-                inputs = {k: v.to(pipe.model.device) for k, v in inputs.items()}
                 
-                # Set generation parameters for multiple sequences
-                generation_kwargs = {
-                    "min_new_tokens": MIN_NEW_TOKENS,
-                    "max_new_tokens": MAX_NEW_TOKENS,
-                    "temperature": TEMPERATURE,
-                    "top_p": TOP_P,
-                    "top_k": TOP_K,
-                    "do_sample": DO_SAMPLE,
-                    "num_return_sequences": SELF_CONSISTENCY_PATHS,
-                    "pad_token_id": pipe.tokenizer.eos_token_id
-                }
-                
-                try:
-                    # Generate all self-consistency paths at once
-                    with torch.no_grad():
-                        # Expand inputs for multiple sequences
-                        expanded_inputs = {
-                            k: v.repeat(SELF_CONSISTENCY_PATHS, 1) if v.dim() == 2 else v
-                            for k, v in inputs.items()
-                        }
-                        
-                        outputs = pipe.model.generate(**expanded_inputs, **generation_kwargs)
-                        
-                        sc_answers = []
-                        for i in range(SELF_CONSISTENCY_PATHS):
-                            output_seq = outputs[i, :]
-                            generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
-                            
-                            if generated_text:
-                                model_response = generated_text[len(formatted_prompt):].strip()
-                                numeric_extracted = extract_numeric_answer(model_response)
-                                if numeric_extracted is not None:
-                                    sc_answers.append(str(int(numeric_extracted)))
-                
-                except Exception as inner_e:
-                    if args.debug:
-                        print(f"Error during self consistency generation for sample index {idx}: {inner_e}")
-                    sc_answers = []
-
-                if sc_answers:
-                    from collections import Counter
-                    counts = Counter(sc_answers)
-                    pred_answer = counts.most_common(1)[0][0]
-                else:
-                    pred_answer = None
-
-                is_correct = False
-                if pred_answer is not None and gold_answer is not None:
-                    try:
-                        pred_value = float(pred_answer)
-                        gold_value = float(gold_answer)
-                        is_correct = abs(pred_value - gold_value) < 1e-7
-                    except Exception as e:
-                        if args.debug:
-                            print(f"Error comparing numeric answers for sample index {idx}: {e}")
-                
-                if is_correct:
-                    correct += 1
-                total += 1
-
-                result = {
-                    "sample_index": idx,
-                    "question": question,
+                batch_results.append({
+                    "sample_idx": sample_idx,
                     "prompt": formatted_prompt,
-                    "generated_text": f"Self-consistency answers: {sc_answers}",
-                    "pred_answer": pred_answer,
                     "gold_answer": gold_answer,
-                    "is_correct": is_correct
-                }
-                
-                batch_results.append(result)
-                results.append(result)
-
-                if args.debug:
-                    print(f"\nSample index {idx}:")
-                    print(f"Prompt: {formatted_prompt}")
-                    print(f"Self-consistency numeric answers: {sc_answers}")
-                    print(f"Predicted numeric answer: {pred_answer}")
-                    print(f"Gold numeric answer: {gold_answer}")
-                    print(f"Correct: {is_correct}")
-
-            except Exception as e:
-                if args.debug:
-                    print(f"Error processing sample index {idx}: {str(e)}")
-        
-        # Print batch summary if debug is enabled
-        if args.debug and batch_results:
-            batch_correct = sum(1 for r in batch_results if r["is_correct"])
-            batch_total = len(batch_results)
-            batch_acc = batch_correct / batch_total if batch_total else 0
-            print(f"\nBatch {i//args.batch_size + 1} Accuracy: {batch_acc:.2%} ({batch_correct}/{batch_total})")
-    
-    return correct, total, results
-
-def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_samples):
-    """
-    Process numeric datasets in batch mode (i.e., single-path generation).
-    Each batch processes a set of samples in parallel.
-    """
-    correct = 0
-    total = 0
-    results = []
-    
-    # Process in batches
-    for i in range(0, max_samples, args.batch_size):
-        batch_indices = list(range(i, min(i + args.batch_size, max_samples)))
-        batch_prompts = []
-        batch_examples = []
-        batch_correct = 0 
-        
-        # Prepare all prompts for the batch
-        for idx in tqdm(batch_indices, desc=f"Preparing batch {i//args.batch_size + 1}/{(max_samples + args.batch_size - 1)//args.batch_size}"):
-            try:
-                example = dataset[idx]
-                question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                
-                if args.dataset == "drop":
-                    answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
-                    if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
-                        raw_gold_answer = answers_spans['spans'][0]
-                    else:
-                        raw_gold_answer = str(answers_spans)
-                else:
-                    raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
-                
-                if args.dataset == "gsm8k":
-                    gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
-                else:
-                    gold_answer = extract_numeric_answer(raw_gold_answer)
-                
-                if gold_answer is not None:
-                    gold_answer = str(int(gold_answer))
-                
-                passage = None
-                if args.dataset == "drop" and "passage" in example:
-                    passage = example["passage"]
-                    
-                options = None
-                formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                batch_examples.append({
-                    "sample_index": idx,
                     "question": question,
-                    "gold_answer": gold_answer,
-                    "prompt": formatted_prompt,
-                    "options": options
+                    "sc_answers": []
                 })
-                batch_prompts.append(formatted_prompt)
             except Exception as e:
                 if args.debug:
-                    print(f"Error preparing batch for sample index {idx}: {str(e)}")
+                    print(f"Error preparing sample {sample_idx}: {e}")
                 continue
-
-        if not batch_prompts:
-            continue
         
-        # Process the batch of prompts in parallel using the model directly
-        try:
-            # Tokenize all prompts in the batch
-            inputs = pipe.tokenizer(batch_prompts, return_tensors="pt", padding=True)
-            inputs = {k: v.to(pipe.model.device) for k, v in inputs.items()}
+        # Now generate all SC paths for this batch efficiently by processing paths in sub-batches
+        for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):
+            path_batch_end = min(path_batch_idx + effective_paths_per_batch, SELF_CONSISTENCY_PATHS)
+            paths_in_current_batch = path_batch_end - path_batch_idx
+            
+            # Prepare a batch of prompts (one for each sample) for the current SC path batch
+            all_prompts = [result["prompt"] for result in batch_results]
+            if not all_prompts:
+                continue  # Skip if no valid prompts
+                
+            # Tokenize all prompts at once
+            tokenized_inputs = pipe.tokenizer(
+                all_prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True
+            )
+            tokenized_inputs = {k: v.to(pipe.model.device) for k, v in tokenized_inputs.items()}
             
             # Set generation parameters
             generation_kwargs = {
@@ -218,79 +106,230 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                 "temperature": TEMPERATURE,
                 "top_p": TOP_P,
                 "top_k": TOP_K,
-                "do_sample": DO_SAMPLE,
-                "pad_token_id": pipe.tokenizer.eos_token_id
+                "do_sample": True,  # Ensure sampling for SC
+                "pad_token_id": pipe.tokenizer.eos_token_id,
+                "num_return_sequences": paths_in_current_batch,
             }
             
-            # Generate outputs for all prompts in the batch
-            with torch.no_grad():
-                outputs = pipe.model.generate(**inputs, **generation_kwargs)
+            # Generate SC paths for all samples at once (with optimized attention)
+            try:
+                with torch.no_grad():
+                    # Generate multiple sequences with optimized batch processing
+                    outputs = pipe.model.generate(
+                        **tokenized_inputs,
+                        **generation_kwargs
+                    )
+                    
+                    # Process generated outputs
+                    # For each sample, we'll get 'paths_in_current_batch' sequences
+                    for sample_idx, result in enumerate(batch_results):
+                        prompt_len = len(pipe.tokenizer.encode(result["prompt"]))
+                        
+                        for path_idx in range(paths_in_current_batch):
+                            # Calculate the actual output index based on num_return_sequences
+                            output_idx = sample_idx * paths_in_current_batch + path_idx
+                            
+                            if output_idx >= len(outputs):
+                                break
+                                
+                            output_seq = outputs[output_idx]
+                            
+                            # Decode sequence
+                            generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
+                            
+                            # Extract the response (after the prompt)
+                            # Using string length is more reliable than token counts for extraction
+                            model_response = generated_text[len(result["prompt"]):].strip()
+                            
+                            # Extract numeric answer from response
+                            numeric_extracted = extract_numeric_answer(model_response)
+                            if numeric_extracted is not None:
+                                result["sc_answers"].append(str(int(numeric_extracted)))
+                                
+                            # Add generated text for the first path only (to save memory)
+                            if path_idx == 0 and "generated_text" not in result:
+                                result["generated_text"] = model_response
+            
+            except Exception as batch_error:
+                if args.debug:
+                    print(f"Error in batch generation: {batch_error}")
+        
+        # Process final answers for each sample in the batch
+        for result in batch_results:
+            if result["sc_answers"]:
+                # Use majority voting from self-consistency paths
+                answer_counts = Counter(result["sc_answers"])
+                pred_answer = answer_counts.most_common(1)[0][0]
                 
-                # Decode all outputs
-                generated_texts = pipe.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        except Exception as e:
-            if args.debug:
-                print(f"Error in batch processing for samples {i} to {min(i + args.batch_size, max_samples)-1}: {str(e)}")
-            continue
-
-        # Process the results for each example in the batch
-        for j, generated_text in enumerate(tqdm(generated_texts, desc=f"Processing results for batch {i//args.batch_size + 1}/{(max_samples + args.batch_size - 1)//args.batch_size}")):
-            if j >= len(batch_examples):
-                continue
-                
-            idx = batch_examples[j]["sample_index"]
-            formatted_prompt = batch_examples[j]["prompt"]
-
-            if generated_text:
-                # Extract the model response by removing the prompt
-                model_response = generated_text[len(formatted_prompt):].strip()
-                pred_answer = extract_numeric_answer(model_response)
-                
-                is_correct = False
-                if pred_answer is not None and batch_examples[j]["gold_answer"] is not None:
-                    try:
-                        pred_num = float(pred_answer.replace(',', ''))
-                        gold_num = float(batch_examples[j]["gold_answer"])
-                        is_correct = abs(pred_num - gold_num) < 1e-7
-                    except Exception as e:
-                        if args.debug:
-                            print(f"Error comparing numeric answers for sample index {idx}: {e}")
-                
-                result = {
-                    "sample_index": idx,
-                    "question": batch_examples[j]["question"],
-                    "prompt": formatted_prompt,
-                    "generated_text": model_response,
-                    "pred_answer": pred_answer,
-                    "gold_answer": batch_examples[j]["gold_answer"],
-                    "is_correct": is_correct
-                }
-                
-                results.append(result)
-                
+                is_correct = pred_answer == result["gold_answer"]
                 if is_correct:
                     correct += 1
-                    batch_correct += 1
+                
                 total += 1
                 
+                # Format result for output
+                results.append({
+                    "sample_index": result["sample_idx"],
+                    "question": result["question"],
+                    "prompt": result["prompt"],
+                    "generated_text": result.get("generated_text", ""),
+                    "pred_answer": pred_answer,
+                    "gold_answer": result["gold_answer"],
+                    "is_correct": is_correct
+                })
+                
                 if args.debug:
-                    print(f"\nBatch sample index: {idx}")
-                    print(f"Prompt: {formatted_prompt}")
-                    print(f"Model response: {model_response}")
-                    print(f"Extracted answer: {pred_answer}")
-                    print(f"Gold answer: {batch_examples[j]['gold_answer']}")
-                    print(f"Correct: {is_correct}")
+                    confidence = answer_counts[pred_answer] / len(result["sc_answers"])
+                    print(f"Sample {result['sample_idx']} - Predicted: {pred_answer}, Gold: {result['gold_answer']}, "
+                          f"Correct: {is_correct}, Confidence: {confidence:.2f}, "
+                          f"SC Paths: {len(result['sc_answers'])}/{SELF_CONSISTENCY_PATHS}")
             else:
+                # No answers extracted
+                total += 1
                 if args.debug:
-                    print(f"No generated text found in batch output for sample index {idx}.")
+                    print(f"Sample {result['sample_idx']} - No answers extracted")
 
-        # Print batch summary if debug is enabled
-        if args.debug and batch_examples:
-            batch_total = len(batch_examples)
-            batch_acc = batch_correct / batch_total if batch_total else 0
-            print(f"\nBatch {i//args.batch_size + 1}/{(max_samples + args.batch_size - 1)//args.batch_size} Summary:")
-            print(f"Batch accuracy: {batch_acc:.2%} ({batch_correct}/{batch_total})")
-            print(f"Overall accuracy: {correct/total:.2%} ({correct}/{total})")
-            print("-" * 50)
+    return correct, total, results
 
+def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_samples):
+    """
+    Process numeric datasets (e.g., GSM8K, DROP) using normal generation.
+    Enhanced for better performance with efficient batching.
+    """
+    correct = 0
+    total = 0
+    results = []
+
+    # Process in batches
+    for i in range(0, max_samples, batch_size):
+        batch_indices = list(range(i, min(i + batch_size, max_samples)))
+        batch_questions = []
+        batch_gold_answers = []
+        batch_examples = []
+        batch_prompts = []
+        
+        # Process each sample and create batch inputs
+        for idx in batch_indices:
+            try:
+                example = dataset[idx]
+                batch_examples.append(example)
+                
+                question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
+                batch_questions.append(question)
+
+                # Handle different datasets
+                if args.dataset == "drop":
+                    answers_spans = example[DATASET_CONFIGS[args.dataset]["answer_key"]]
+                    if isinstance(answers_spans, dict) and 'spans' in answers_spans and len(answers_spans['spans']) > 0:
+                        raw_gold_answer = answers_spans['spans'][0]
+                    else:
+                        raw_gold_answer = str(answers_spans)
+                else:
+                    raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+
+                if args.dataset == "gsm8k":
+                    gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
+                else:
+                    gold_answer = extract_numeric_answer(raw_gold_answer)
+                    
+                batch_gold_answers.append(gold_answer)
+
+                passage = None
+                if args.dataset == "drop" and "passage" in example:
+                    passage = example["passage"]
+
+                options = None
+                formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+                batch_prompts.append(formatted_prompt)
+            except Exception as e:
+                if args.debug:
+                    print(f"Error processing example at index {idx}: {str(e)}")
+                total += 1
+                continue
+
+        if not batch_prompts:
+            continue
+            
+        # Prepare tokenized inputs
+        tokenized_inputs = pipe.tokenizer(
+            batch_prompts, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True
+        )
+        tokenized_inputs = {k: v.to(pipe.model.device) for k, v in tokenized_inputs.items()}
+
+        # Set generation parameters
+        generation_kwargs = {
+            "min_new_tokens": MIN_NEW_TOKENS,
+            "max_new_tokens": MAX_NEW_TOKENS,
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+            "top_k": TOP_K,
+            "do_sample": DO_SAMPLE,
+            "pad_token_id": pipe.tokenizer.eos_token_id,
+            "num_return_sequences": NUM_RETURN_SEQUENCES
+        }
+        
+        # Generate text with optimized batch processing
+        try:
+            with torch.no_grad():
+                outputs = pipe.model.generate(
+                    **tokenized_inputs,
+                    **generation_kwargs
+                )
+                
+                # Process outputs for each sample in the batch
+                for idx, (prompt, gold_answer, question) in enumerate(zip(batch_prompts, batch_gold_answers, batch_questions)):
+                    output_idx = idx * NUM_RETURN_SEQUENCES  # Account for multiple sequences per input
+                    if output_idx >= len(outputs):
+                        continue
+                        
+                    output_seq = outputs[output_idx]
+                    generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
+                    
+                    # Extract the model's response (after the prompt)
+                    model_response = generated_text[len(prompt):].strip()
+                    
+                    # Extract numeric answer
+                    pred_answer = extract_numeric_answer(model_response)
+                    pred_answer_str = str(int(pred_answer)) if pred_answer is not None else None
+                    
+                    # Check if prediction is correct
+                    is_correct = pred_answer_str == gold_answer
+                    if is_correct:
+                        correct += 1
+                    
+                    # Format result
+                    result = {
+                        "sample_index": i + idx,
+                        "question": question,
+                        "prompt": prompt,
+                        "generated_text": model_response,
+                        "pred_answer": pred_answer_str,
+                        "gold_answer": gold_answer,
+                        "is_correct": is_correct
+                    }
+                    
+                    results.append(result)
+                    total += 1
+                    
+                    if args.debug:
+                        print(f"Example {i + idx}:")
+                        print(f"Question: {question}")
+                        print(f"Response: {model_response[:100]}...")
+                        print(f"Extracted Answer: {pred_answer_str}")
+                        print(f"Gold Answer: {gold_answer}")
+                        print(f"Is Correct: {is_correct}")
+                        print("-" * 50)
+
+        except Exception as e:
+            if args.debug:
+                print(f"Error processing batch {i//batch_size}: {str(e)}")
+            
+        # Print batch progress
+        accuracy = correct / total if total > 0 else 0
+        print(f"Batch {i//batch_size + 1}/{(max_samples + batch_size - 1)//batch_size} - "
+              f"Accuracy: {accuracy:.2%} ({correct}/{total})")
+    
     return correct, total, results 

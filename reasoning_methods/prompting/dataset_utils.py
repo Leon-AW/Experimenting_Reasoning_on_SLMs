@@ -3,6 +3,7 @@ import sys
 from datasets import load_dataset
 import torch
 import random
+import os
 from .config import SEED  # Import the seed from config
 import psutil  # For non-CUDA memory info
 
@@ -65,13 +66,13 @@ def load_custom_dataset(dataset_config, max_retries=3):
 def configure_hardware():
     """
     Dynamically detect available hardware and configure parameters to maximize computational capacity.
+    Optimized for high-end GPUs like A100s with 80GB VRAM.
     
     Returns:
        device (str): "cuda", "mps", or "cpu"
        batch_size (int): Dynamically calculated batch size based on available memory.
        num_gpus (int): Number of available GPUs.
        max_memory (dict): Maximum memory allocation per device in the format expected by transformers.
-                           For GPUs, keys should be integers.
     """
     if torch.cuda.is_available():
         device = "cuda"
@@ -84,16 +85,30 @@ def configure_hardware():
         total_memory_mb = 0
         memory_per_gpu = {}
         
+        # GPU model detection - to better optimize for A100s
+        gpu_models = []
+        has_a100 = False
+        
         # Check each GPU
         for i in range(num_gpus):
             # Get GPU properties
             gpu_properties = torch.cuda.get_device_properties(i)
             gpu_name = gpu_properties.name
+            gpu_models.append(gpu_name)
+            
             gpu_memory_mb = gpu_properties.total_memory / (1024 * 1024)  # Total memory in MB
             free_memory_mb = torch.cuda.mem_get_info(i)[0] / (1024 * 1024)  # Free memory in MB
             
-            # Store memory info - use 85-90% of available memory to be safe for overhead
-            memory_per_gpu[i] = min(gpu_memory_mb * 0.85, free_memory_mb * 0.9)  # Memory in MB
+            # Check if this is an A100 GPU
+            if "A100" in gpu_name:
+                has_a100 = True
+                # For A100s, we can use a higher percentage of memory safely
+                utilization_factor = 0.95  # Use 95% of available memory for A100s
+            else:
+                utilization_factor = 0.85  # Use 85% for other GPUs
+                
+            # Store memory info with GPU-specific utilization factor
+            memory_per_gpu[i] = min(gpu_memory_mb * utilization_factor, free_memory_mb * utilization_factor)
             total_memory_mb += memory_per_gpu[i]
             
             print(f"GPU {i}: {gpu_name}, Total Memory: {gpu_memory_mb/1024:.2f} GB, Free Memory: {free_memory_mb/1024:.2f} GB")
@@ -101,23 +116,58 @@ def configure_hardware():
         # Build max_memory dictionary with keys for GPUs as integers
         max_memory = {}
         for i in range(num_gpus):
-            # Convert available MB to GB and ensure at least 10GB per GPU to avoid offloading to disk
-            available_gb = max(10, int(memory_per_gpu[i] / 1024))
+            # Convert available MB to GB and ensure appropriate minimum based on GPU type
+            min_gb = 75 if "A100" in gpu_models[i] and "80GB" in gpu_models[i] else 10
+            available_gb = max(min_gb, int(memory_per_gpu[i] / 1024))
             max_memory[i] = f"{available_gb}GB"
         
-        # For CPU offloading, assign a small fixed amount (to avoid excessive offload)
-        max_memory["cpu"] = "2GB"
+        # For CPU offloading, we can allocate more if we have A100s
+        if has_a100:
+            # More CPU memory for A100 setups to balance the workflow
+            max_memory["cpu"] = "8GB"
+        else:
+            max_memory["cpu"] = "2GB"
         
-        # Calculate batch size based on total available memory (heuristic: ~2GB per batch item)
-        memory_per_item_gb = 2  # Change this value if you know the model requires more/less memory per item
+        # Calculate batch size based on available memory and model size
+        # The heuristic is adjusted based on detected GPU type
+        if has_a100:
+            # For A100 with 80GB, we can process many more samples per batch
+            # These values are optimized for LLaMA-3 (3B and 1B) models specifically
+            memory_per_item_gb = 0.75  # LLaMA models need less memory per item with optimization
+            buffer_factor = 1.1  # Only 10% buffer needed with A100s
+            
+            # Further optimize based on environment variables if present
+            if os.environ.get('MODEL_SIZE') == '1b':
+                memory_per_item_gb = 0.5  # 1B model needs even less memory per item
+            elif os.environ.get('MODEL_SIZE') == '3b':
+                memory_per_item_gb = 1.0  # 3B model needs a bit more
+        else:
+            # Default values for other GPUs
+            memory_per_item_gb = 2.0
+            buffer_factor = 1.5  # 50% buffer for other GPUs
+        
         total_memory_gb = total_memory_mb / 1024
         
-        estimated_batch_size = max(1, int(total_memory_gb / (memory_per_item_gb * 1.5)))  # using a 33% buffer
+        estimated_batch_size = max(1, int(total_memory_gb / (memory_per_item_gb * buffer_factor)))
         
-        # Set an upper cap for batch size
-        batch_size = min(256, estimated_batch_size)
+        # Set batch size caps based on GPU type
+        if has_a100:
+            max_batch_size = 512  # Much higher for A100s
+        else:
+            max_batch_size = 256  # Default cap
+            
+        batch_size = min(max_batch_size, estimated_batch_size)
         
-        print(f"Dynamically configured batch_size={batch_size}, using {num_gpus} GPUs with max_memory={max_memory}")
+        # Enable tensor cores for faster computation on compatible GPUs
+        if has_a100:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            print("Enabled TF32 precision for faster computation on A100 GPUs")
+        
+        # Configure PyTorch for maximum performance
+        torch.backends.cudnn.benchmark = True  # Enable cuDNN auto-tuner
+        
+        print(f"Optimized configuration: batch_size={batch_size}, {num_gpus} GPUs with max_memory={max_memory}")
         
         return device, batch_size, num_gpus, max_memory
         

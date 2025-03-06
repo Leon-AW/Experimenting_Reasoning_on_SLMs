@@ -1,10 +1,227 @@
 from tqdm import tqdm
 from collections import Counter
 from .prompts import format_prompt
-from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS
+from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS, TOP_P, TOP_K
 import torch
 import numpy as np
+import math
+import os
 
+# Try to import optimization config if available
+try:
+    from .optimization_config import is_running_on_a100, get_optimized_memory_config
+    OPTIMIZATION_CONFIG_AVAILABLE = True
+except ImportError:
+    OPTIMIZATION_CONFIG_AVAILABLE = False
+
+def get_mc_pred_answer_with_cot_batch(prompts, options_list, model, tokenizer, temperature=TEMPERATURE, 
+                                     cot_max_new_tokens=MAX_NEW_TOKENS, cot_min_new_tokens=MIN_NEW_TOKENS):
+    """
+    Optimized batch version of get_mc_pred_answer_with_cot.
+    Generates chain-of-thought for multiple prompts at once, then computes log-likelihoods.
+    
+    Parameters:
+    - prompts: List of input prompts
+    - options_list: List of options for each prompt
+    - model: The language model
+    - tokenizer: The tokenizer
+    - temperature: Temperature for generation
+    - cot_max_new_tokens: Maximum number of tokens to generate for CoT
+    - cot_min_new_tokens: Minimum number of tokens to generate for CoT
+    
+    Returns:
+    - List of (pred_answer, generated_text) tuples
+    """
+    if not prompts:
+        return []
+    
+    # Generate CoT with proper attention mask for all prompts at once
+    inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+    
+    # Set generation parameters
+    generation_kwargs = {
+        "max_new_tokens": cot_max_new_tokens,
+        "min_new_tokens": cot_min_new_tokens,
+        "do_sample": temperature > 0,
+        "pad_token_id": tokenizer.eos_token_id,
+        "no_repeat_ngram_size": 3  # Prevent repetitive text
+    }
+    
+    # Add temperature for sampling if do_sample is True
+    if temperature > 0:
+        generation_kwargs["temperature"] = temperature
+        generation_kwargs["top_p"] = TOP_P
+        generation_kwargs["top_k"] = TOP_K
+    else:
+        # Explicitly set temperature and top_p to None to override model defaults
+        generation_kwargs["temperature"] = None
+        generation_kwargs["top_p"] = None
+        generation_kwargs["top_k"] = None
+    
+    # Generate all CoT texts at once
+    with torch.no_grad():
+        outputs = model.generate(**inputs, **generation_kwargs)
+        
+        # Decode all outputs
+        generated_texts = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    
+    results = []
+    
+    # Process each generated text and compute log-likelihoods
+    for i, (generated_text, options) in enumerate(zip(generated_texts, options_list)):
+        # Ensure the generated text ends with 'Answer:'
+        if not generated_text.strip().endswith("Answer:"):
+            base_context = generated_text.strip() + "\nAnswer:"
+        else:
+            base_context = generated_text.strip()
+
+        # Create candidate letters for options
+        candidate_letters = [chr(65 + j) for j in range(len(options))]
+        scores = {}
+
+        # Tokenize with proper attention mask
+        base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
+        base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
+        base_length = base_inputs["input_ids"].shape[1]
+
+        # Compute log-likelihoods for all candidate letters at once
+        candidate_texts = [base_context + " " + letter for letter in candidate_letters]
+        tokenized_candidates = tokenizer(candidate_texts, return_tensors="pt", padding=True)
+        tokenized_candidates = {k: v.to(model.device) for k, v in tokenized_candidates.items()}
+        
+        # Create labels for loss computation (mask out the base context)
+        labels = tokenized_candidates["input_ids"].clone()
+        for j in range(len(candidate_letters)):
+            labels[j, :base_length] = -100
+        
+        # Compute loss for all candidates at once
+        with torch.no_grad():
+            outputs = model(
+                input_ids=tokenized_candidates["input_ids"],
+                attention_mask=tokenized_candidates["attention_mask"],
+                labels=labels
+            )
+        
+        # Extract losses for each candidate
+        losses = outputs.loss.item() if len(candidate_letters) == 1 else outputs.loss.tolist()
+        
+        # Convert to loglikelihoods
+        for j, letter in enumerate(candidate_letters):
+            loss = losses[j] if isinstance(losses, list) else losses
+            candidate_len = tokenized_candidates["input_ids"].shape[1] - base_length
+            total_loss = loss * candidate_len
+            loglikelihood = -total_loss
+            scores[letter] = loglikelihood
+
+        # Select the best letter
+        if temperature == 0.0:
+            best_letter = max(scores, key=scores.get)
+        else:
+            logits = np.array([scores[letter] for letter in candidate_letters])
+            logits = logits / temperature
+            exp_logits = np.exp(logits - np.max(logits))
+            probs = exp_logits / exp_logits.sum()
+            choice_idx = np.random.choice(len(candidate_letters), p=probs)
+            best_letter = candidate_letters[choice_idx]
+        
+        mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+        results.append((mapping.get(best_letter, best_letter), generated_text))
+    
+    return results
+
+def get_mc_pred_answer_simple_batch(prompts, options_list, model, tokenizer, temperature=0.0):
+    """
+    Optimized batch version of get_mc_pred_answer_simple.
+    Computes log-likelihoods for multiple prompts at once.
+    
+    Parameters:
+    - prompts: List of input prompts
+    - options_list: List of options for each prompt
+    - model: The language model
+    - tokenizer: The tokenizer
+    - temperature: Temperature for sampling
+    
+    Returns:
+    - List of predicted answers
+    """
+    if not prompts:
+        return []
+    
+    results = []
+    
+    # Process in smaller sub-batches to avoid OOM
+    max_sub_batch = 16  # Adjust based on available memory
+    
+    for i in range(0, len(prompts), max_sub_batch):
+        sub_prompts = prompts[i:i+max_sub_batch]
+        sub_options_list = options_list[i:i+max_sub_batch]
+        
+        sub_results = []
+        
+        # Process each prompt in the sub-batch
+        for prompt, options in zip(sub_prompts, sub_options_list):
+            if not prompt.strip().endswith("Answer:"):
+                base_context = prompt.strip() + "\nAnswer:"
+            else:
+                base_context = prompt.strip()
+                
+            candidate_letters = [chr(65 + j) for j in range(len(options))]
+            scores = {}
+            
+            # Tokenize with proper attention mask
+            base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
+            base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
+            base_length = base_inputs["input_ids"].shape[1]
+            
+            # Compute log-likelihoods for all candidate letters at once
+            candidate_texts = [base_context + " " + letter for letter in candidate_letters]
+            tokenized_candidates = tokenizer(candidate_texts, return_tensors="pt", padding=True)
+            tokenized_candidates = {k: v.to(model.device) for k, v in tokenized_candidates.items()}
+            
+            # Create labels for loss computation (mask out the base context)
+            labels = tokenized_candidates["input_ids"].clone()
+            for j in range(len(candidate_letters)):
+                labels[j, :base_length] = -100
+            
+            # Compute loss for all candidates at once
+            with torch.no_grad():
+                outputs = model(
+                    input_ids=tokenized_candidates["input_ids"],
+                    attention_mask=tokenized_candidates["attention_mask"],
+                    labels=labels
+                )
+            
+            # Extract losses for each candidate
+            losses = outputs.loss.item() if len(candidate_letters) == 1 else outputs.loss.tolist()
+            
+            # Convert to loglikelihoods
+            for j, letter in enumerate(candidate_letters):
+                loss = losses[j] if isinstance(losses, list) else losses
+                candidate_len = tokenized_candidates["input_ids"].shape[1] - base_length
+                total_loss = loss * candidate_len
+                loglikelihood = -total_loss
+                scores[letter] = loglikelihood
+            
+            # Select the best letter
+            if temperature == 0.0:
+                best_letter = max(scores, key=scores.get)
+            else:
+                logits = np.array([scores[letter] for letter in candidate_letters])
+                logits = logits / temperature
+                exp_logits = np.exp(logits - np.max(logits))
+                probs = exp_logits / exp_logits.sum()
+                choice_idx = np.random.choice(len(candidate_letters), p=probs)
+                best_letter = candidate_letters[choice_idx]
+            
+            mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+            sub_results.append(mapping.get(best_letter, best_letter))
+        
+        results.extend(sub_results)
+    
+    return results
+
+# Keep the original functions for backward compatibility
 def get_mc_pred_answer_with_cot(prompt, options, model, tokenizer, temperature=TEMPERATURE, 
                                cot_max_new_tokens=MAX_NEW_TOKENS, cot_min_new_tokens=MIN_NEW_TOKENS):
     """
@@ -20,158 +237,62 @@ def get_mc_pred_answer_with_cot(prompt, options, model, tokenizer, temperature=T
     - cot_max_new_tokens: Maximum number of tokens to generate for CoT
     - cot_min_new_tokens: Minimum number of tokens to generate for CoT
     """
-    # Generate CoT with proper attention mask
-    inputs = tokenizer(prompt, return_tensors="pt", padding=True)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-    
-    # Set generation parameters
-    generation_kwargs = {
-        "max_new_tokens": cot_max_new_tokens,
-        "min_new_tokens": cot_min_new_tokens,
-        "do_sample": temperature > 0,
-        "pad_token_id": tokenizer.eos_token_id,
-        "no_repeat_ngram_size": 3  # Prevent repetitive text
-    }
-    
-    # Add temperature for sampling if do_sample is True
-    if temperature > 0:
-        generation_kwargs["temperature"] = temperature
-    else:
-        # Explicitly set temperature and top_p to None to override model defaults
-        generation_kwargs["temperature"] = None
-        generation_kwargs["top_p"] = None
-        generation_kwargs["top_k"] = None
-    
-    output = model.generate(**inputs, **generation_kwargs)
-    generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
-
-    # Ensure the generated text ends with 'Answer:'
-    if not generated_text.strip().endswith("Answer:"):
-        base_context = generated_text.strip() + "\nAnswer:"
-    else:
-        base_context = generated_text.strip()
-
-    # Create candidate letters for options
-    candidate_letters = [chr(65 + i) for i in range(len(options))]
-    scores = {}
-
-    # Tokenize with proper attention mask
-    base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
-    base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
-    base_length = base_inputs["input_ids"].shape[1]
-
-    for letter in candidate_letters:
-        candidate_text = " " + letter
-        full_input = base_context + candidate_text
-        
-        # Tokenize with proper attention mask
-        tokenized = tokenizer(full_input, return_tensors="pt", padding=True)
-        tokenized = {k: v.to(model.device) for k, v in tokenized.items()}
-        
-        candidate_len = tokenized["input_ids"].shape[1] - base_length
-        labels = tokenized["input_ids"].clone()
-        labels[:, :base_length] = -100
-        
-        with torch.no_grad():
-            outputs = model(input_ids=tokenized["input_ids"], 
-                           attention_mask=tokenized["attention_mask"], 
-                           labels=labels)
-
-        loss = outputs.loss.item()
-        total_loss = loss * candidate_len
-        loglikelihood = -total_loss
-        scores[letter] = loglikelihood
-
-    if temperature == 0.0:
-        best_letter = max(scores, key=scores.get)
-    else:
-        logits = np.array([scores[letter] for letter in candidate_letters])
-        logits = logits / temperature
-        exp_logits = np.exp(logits - np.max(logits))
-        probs = exp_logits / exp_logits.sum()
-        choice_idx = np.random.choice(len(candidate_letters), p=probs)
-        best_letter = candidate_letters[choice_idx]
-    
-    mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
-    return mapping.get(best_letter, best_letter), generated_text
+    results = get_mc_pred_answer_with_cot_batch([prompt], [options], model, tokenizer, temperature, 
+                                              cot_max_new_tokens, cot_min_new_tokens)
+    return results[0] if results else (None, "")
 
 def get_mc_pred_answer_simple(prompt, options, model, tokenizer, temperature=0.0):
     """
-    Berechnet die Loglikelihood für jede Antwortoption, ohne erst CoT zu generieren.
+    Computes the log-likelihood for each answer option, without generating CoT first.
     """
-    if not prompt.strip().endswith("Answer:"):
-        base_context = prompt.strip() + "\nAnswer:"
-    else:
-        base_context = prompt.strip()
-        
-    candidate_letters = [chr(65 + i) for i in range(len(options))]
-    scores = {}
-    
-    # Tokenize with proper attention mask
-    base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
-    base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
-    base_length = base_inputs["input_ids"].shape[1]
-    
-    for letter in candidate_letters:
-        candidate_text = " " + letter
-        full_input = base_context + candidate_text
-        
-        # Tokenize with proper attention mask
-        tokenized = tokenizer(full_input, return_tensors="pt", padding=True)
-        tokenized = {k: v.to(model.device) for k, v in tokenized.items()}
-        
-        candidate_len = tokenized["input_ids"].shape[1] - base_length
-        labels = tokenized["input_ids"].clone()
-        labels[:, :base_length] = -100
-        
-        with torch.no_grad():
-            outputs = model(input_ids=tokenized["input_ids"], 
-                           attention_mask=tokenized["attention_mask"], 
-                           labels=labels)
-        loss = outputs.loss.item()
-        total_loss = loss * candidate_len
-        loglikelihood = -total_loss  
-        scores[letter] = loglikelihood
-    
-    if temperature == 0.0:
-        best_letter = max(scores, key=scores.get)
-    else:
-        logits = np.array([scores[letter] for letter in candidate_letters])
-        logits = logits / temperature
-        exp_logits = np.exp(logits - np.max(logits))
-        probs = exp_logits / exp_logits.sum()
-        choice_idx = np.random.choice(len(candidate_letters), p=probs)
-        best_letter = candidate_letters[choice_idx]
-    
-    mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
-    return mapping.get(best_letter, best_letter)
+    results = get_mc_pred_answer_simple_batch([prompt], [options], model, tokenizer, temperature)
+    return results[0] if results else None
 
 def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indices, mapping):
     """
-    Process multiple-choice datasets using self-consistency with proper batching.
-    Each batch processes a set of samples, with each sample going through all self-consistency paths.
+    Process multiple-choice datasets using self-consistency with optimized batching.
+    Efficiently generates multiple paths in parallel for maximum performance.
     """
     correct = 0
     total = 0
     results = []
     
-    # Process in batches
-    for i in range(0, len(sample_indices), args.batch_size):
-        batch_indices = sample_indices[i:i+args.batch_size]
-        batch_results = []
+    # Determine efficient batch size for self-consistency paths
+    # We need to balance: (original batch size) * (paths per sample)
+    if OPTIMIZATION_CONFIG_AVAILABLE and is_running_on_a100():
+        # A100 optimization - we can process more samples at once
+        memory_config = get_optimized_memory_config()
+        effective_paths_per_batch = memory_config["sc_paths_per_batch"]
+        samples_per_batch = max(1, args.batch_size // 2)  # More conservative for MC tasks
+    else:
+        # Conservative settings for other GPUs
+        effective_paths_per_batch = min(SELF_CONSISTENCY_PATHS, 2)
+        samples_per_batch = max(1, args.batch_size // 3)  # More conservative for MC tasks
+    
+    # Process in batches of samples
+    num_batches = math.ceil(len(sample_indices) / samples_per_batch)
+    
+    for batch_idx in range(num_batches):
+        batch_start = batch_idx * samples_per_batch
+        batch_end = min((batch_idx + 1) * samples_per_batch, len(sample_indices))
+        batch_indices = sample_indices[batch_start:batch_end]
         
-        # Process each sample in the batch
-        for idx in tqdm(batch_indices, desc=f"Processing batch {i//args.batch_size + 1}/{(len(sample_indices) + args.batch_size - 1)//args.batch_size} (Self-Consistency)"):
+        print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
+        
+        # Prepare all samples in the batch
+        batch_data = []
+        
+        for sample_idx in batch_indices:
             try:
-                example = dataset[idx]
+                example = dataset[sample_idx]
                 question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
                 gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-                # Normalize the gold_answer to numeric if it is given as letter.
+                # Normalize the gold_answer to numeric if it is given as letter
                 if gold_answer.upper() in mapping:
                     gold_answer = mapping[gold_answer.upper()]
 
-                # Get available options and (if available) passage context.
+                # Get available options and (if available) passage context
                 options = None
                 passage = None
                 if args.dataset == "race":
@@ -191,179 +312,141 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                     options = example.get("options", [])
                 
                 formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-
-                # Run self-consistency paths using log-likelihood with temperature.
-                sc_answers = []
-                generated_texts = []
                 
-                if template_name == "simple":
-                    # For simple template, we can't batch the log-likelihood scoring
-                    for _ in range(SELF_CONSISTENCY_PATHS):
-                        pred = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if options else None
-                        if pred is not None:
-                            sc_answers.append(pred)
-                else:
-                    # For CoT templates, we can batch the generation part
-                    # Generate CoT with proper attention mask
-                    inputs = pipe.tokenizer(formatted_prompt, return_tensors="pt", padding=True)
-                    inputs = {k: v.to(pipe.model.device) for k, v in inputs.items()}
+                batch_data.append({
+                    "sample_idx": sample_idx,
+                    "question": question,
+                    "gold_answer": gold_answer,
+                    "prompt": formatted_prompt,
+                    "options": options,
+                    "sc_answers": [],
+                    "generated_text": ""
+                })
+            except Exception as e:
+                if args.debug:
+                    print(f"Error preparing sample {sample_idx}: {e}")
+                continue
+        
+        # Process self-consistency paths in sub-batches
+        if template_name == "simple":
+            # For simple template, we use the optimized batch log-likelihood scoring
+            for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):
+                path_batch_end = min(path_batch_idx + effective_paths_per_batch, SELF_CONSISTENCY_PATHS)
+                paths_in_current_batch = path_batch_end - path_batch_idx
+                
+                # For each path in the current batch
+                for _ in range(paths_in_current_batch):
+                    # Prepare prompts and options for all samples
+                    all_prompts = [sample["prompt"] for sample in batch_data]
+                    all_options = [sample["options"] for sample in batch_data]
                     
-                    # Set generation parameters
-                    generation_kwargs = {
-                        "max_new_tokens": MAX_NEW_TOKENS,
-                        "min_new_tokens": MIN_NEW_TOKENS,
-                        "do_sample": True,
-                        "temperature": TEMPERATURE,
-                        "pad_token_id": pipe.tokenizer.eos_token_id,
-                        "no_repeat_ngram_size": 3  # Prevent repetitive text
-                    }
+                    # Get predictions for all samples at once
+                    predictions = get_mc_pred_answer_simple_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE)
                     
-                    # Generate paths sequentially but efficiently
-                    for _ in range(SELF_CONSISTENCY_PATHS):
-                        with torch.no_grad():
-                            output = pipe.model.generate(**inputs, **generation_kwargs)
-                            generated_text = pipe.tokenizer.decode(output[0], skip_special_tokens=True)
-                            generated_texts.append(generated_text)
-
-                            # Ensure the generated text ends with 'Answer:'
-                            if not generated_text.strip().endswith("Answer:"):
-                                base_context = generated_text.strip() + "\nAnswer:"
-                            else:
-                                base_context = generated_text.strip()
-
-                            # Create candidate letters for options
-                            candidate_letters = [chr(65 + j) for j in range(len(options))]
-                            scores = {}
-
-                            # Tokenize with proper attention mask
-                            base_inputs = pipe.tokenizer(base_context, return_tensors="pt", padding=True)
-                            base_inputs = {k: v.to(pipe.model.device) for k, v in base_inputs.items()}
-                            base_length = base_inputs["input_ids"].shape[1]
-
-                            for letter in candidate_letters:
-                                candidate_text = " " + letter
-                                full_input = base_context + candidate_text
-                                
-                                # Tokenize with proper attention mask
-                                tokenized = pipe.tokenizer(full_input, return_tensors="pt", padding=True)
-                                tokenized = {k: v.to(pipe.model.device) for k, v in tokenized.items()}
-                                
-                                candidate_len = tokenized["input_ids"].shape[1] - base_length
-                                labels = tokenized["input_ids"].clone()
-                                labels[:, :base_length] = -100
-                                
-                                outputs = pipe.model(input_ids=tokenized["input_ids"], 
-                                                   attention_mask=tokenized["attention_mask"], 
-                                                   labels=labels)
-
-                                loss = outputs.loss.item()
-                                total_loss = loss * candidate_len
-                                loglikelihood = -total_loss
-                                scores[letter] = loglikelihood
-
-                            if TEMPERATURE == 0.0:
-                                best_letter = max(scores, key=scores.get)
-                            else:
-                                logits = np.array([scores[letter] for letter in candidate_letters])
-                                logits = logits / TEMPERATURE
-                                exp_logits = np.exp(logits - np.max(logits))
-                                probs = exp_logits / exp_logits.sum()
-                                choice_idx = np.random.choice(len(candidate_letters), p=probs)
-                                best_letter = candidate_letters[choice_idx]
-                            
-                            pred = mapping.get(best_letter, best_letter)
+                    # Store predictions for each sample
+                    for i, pred in enumerate(predictions):
+                        if i < len(batch_data) and pred is not None:
+                            batch_data[i]["sc_answers"].append(pred)
+        else:
+            # For CoT templates, we process paths in batches
+            for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):
+                path_batch_end = min(path_batch_idx + effective_paths_per_batch, SELF_CONSISTENCY_PATHS)
+                paths_in_current_batch = path_batch_end - path_batch_idx
+                
+                # For each path in the current batch
+                for _ in range(paths_in_current_batch):
+                    # Prepare prompts and options for all samples
+                    all_prompts = [sample["prompt"] for sample in batch_data]
+                    all_options = [sample["options"] for sample in batch_data]
+                    
+                    # Generate CoT and get predictions for all samples at once
+                    pred_results = get_mc_pred_answer_with_cot_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE)
+                    
+                    # Store predictions and generated text for each sample
+                    for i, (pred, generated_text) in enumerate(pred_results):
+                        if i < len(batch_data):
                             if pred is not None:
-                                sc_answers.append(pred)
-
-                # Majority vote of the self-consistency answers.
-                if sc_answers:
-                    counts = Counter(sc_answers)
-                    pred_answer = counts.most_common(1)[0][0]
-                else:
-                    pred_answer = None
-
-                is_correct = False
-                if pred_answer is not None and gold_answer is not None:
-                    is_correct = str(pred_answer).upper() == str(gold_answer).upper()
-
+                                batch_data[i]["sc_answers"].append(pred)
+                            
+                            # Store the first generated text for display
+                            if not batch_data[i]["generated_text"] and generated_text:
+                                batch_data[i]["generated_text"] = generated_text
+        
+        # Process final answers for each sample in the batch
+        for sample_data in batch_data:
+            if sample_data["sc_answers"]:
+                # Use majority voting from self-consistency paths
+                answer_counts = Counter(sample_data["sc_answers"])
+                pred_answer = answer_counts.most_common(1)[0][0]
+                
+                is_correct = str(pred_answer).upper() == str(sample_data["gold_answer"]).upper()
                 if is_correct:
                     correct += 1
+                
                 total += 1
-
-                # Store the generated text for the result
-                generated_text_for_result = ""
-                if generated_texts:
-                    # Use the first generated text for the result
-                    generated_text_for_result = generated_texts[0]
-
+                
+                # Format result for output
                 result = {
-                    "sample_index": idx,
-                    "question": question,
-                    "prompt": formatted_prompt,
-                    "generated_text": generated_text_for_result,
+                    "sample_index": sample_data["sample_idx"],
+                    "question": sample_data["question"],
+                    "prompt": sample_data["prompt"],
+                    "generated_text": sample_data["generated_text"],
                     "pred_answer": pred_answer,
-                    "gold_answer": gold_answer,
+                    "gold_answer": sample_data["gold_answer"],
                     "is_correct": is_correct
                 }
                 
-                batch_results.append(result)
                 results.append(result)
-
+                
                 if args.debug:
-                    print(f"\n{'='*80}")
-                    print(f"SAMPLE INDEX: {idx}")
-                    print(f"{'='*80}")
-                    print(f"\n--- PROMPT ---\n{formatted_prompt}")
-                    
-                    if generated_texts:
-                        print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_texts[0]}")
-                    
-                    print(f"\n--- RESULTS ---")
-                    print(f"Self-consistency answers: {sc_answers}")
-                    print(f"Predicted answer: {pred_answer}")
-                    print(f"Gold answer: {gold_answer}")
-                    print(f"Correct: {is_correct}")
-                    print(f"{'='*80}")
-
-            except Exception as e:
+                    confidence = answer_counts[pred_answer] / len(sample_data["sc_answers"])
+                    print(f"Sample {sample_data['sample_idx']} - Predicted: {pred_answer}, Gold: {sample_data['gold_answer']}, "
+                          f"Correct: {is_correct}, Confidence: {confidence:.2f}, "
+                          f"SC Paths: {len(sample_data['sc_answers'])}/{SELF_CONSISTENCY_PATHS}")
+            else:
+                # No answers extracted
+                total += 1
                 if args.debug:
-                    print(f"\n{'='*80}")
-                    print(f"ERROR processing sample index {idx}: {str(e)}")
-                    print(f"{'='*80}")
+                    print(f"Sample {sample_data['sample_idx']} - No answers extracted")
         
-        # Print batch summary if debug is enabled
-        if args.debug and batch_results:
-            batch_correct = sum(1 for r in batch_results if r["is_correct"])
-            batch_total = len(batch_results)
-            batch_acc = batch_correct / batch_total if batch_total else 0
-            print(f"\nBatch {i//args.batch_size + 1} Accuracy: {batch_acc:.2%} ({batch_correct}/{batch_total})")
+        # Print batch progress
+        accuracy = correct / total if total > 0 else 0
+        print(f"Batch {batch_idx+1}/{num_batches} - Accuracy: {accuracy:.2%} ({correct}/{total})")
     
     return correct, total, results
 
 def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mapping):
     """
-    Process multiple-choice datasets without self-consistency using batching.
-    Each batch processes a set of samples in parallel.
+    Process multiple-choice datasets without self-consistency using optimized batching.
+    Efficiently processes samples in parallel for maximum performance.
     """
     correct = 0
     total = 0
     results = []
-
+    
+    # Determine batch size based on available memory
+    batch_size = args.batch_size
+    
     # Process in batches
-    for i in range(0, len(sample_indices), args.batch_size):
-        batch_indices = sample_indices[i:i+args.batch_size]
-        batch_results = []
-        batch_prompts = []
-        batch_examples = []
+    num_batches = math.ceil(len(sample_indices) / batch_size)
+    
+    for batch_idx in range(num_batches):
+        batch_start = batch_idx * batch_size
+        batch_end = min((batch_idx + 1) * batch_size, len(sample_indices))
+        batch_indices = sample_indices[batch_start:batch_end]
         
-        # Prepare all prompts for the batch
-        for idx in tqdm(batch_indices, desc=f"Preparing batch {i//args.batch_size + 1}/{(len(sample_indices) + args.batch_size - 1)//args.batch_size}"):
+        print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
+        
+        # Prepare all samples in the batch
+        batch_data = []
+        
+        for sample_idx in batch_indices:
             try:
-                example = dataset[idx]
+                example = dataset[sample_idx]
                 question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
                 gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-                # Normalize the gold_answer to numeric.
+                # Normalize the gold_answer to numeric
                 if gold_answer.upper() in mapping:
                     gold_answer = mapping[gold_answer.upper()]
 
@@ -387,153 +470,75 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
 
                 formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                 
-                batch_examples.append({
-                    "sample_index": idx,
+                batch_data.append({
+                    "sample_idx": sample_idx,
                     "question": question,
                     "gold_answer": gold_answer,
                     "prompt": formatted_prompt,
-                    "options": options
+                    "options": options,
+                    "generated_text": ""
                 })
-                
-                if template_name != "simple":
-                    batch_prompts.append(formatted_prompt)
-                
             except Exception as e:
                 if args.debug:
-                    print(f"\n{'='*80}")
-                    print(f"ERROR preparing sample index {idx}: {str(e)}")
-                    print(f"{'='*80}")
+                    print(f"Error preparing sample {sample_idx}: {e}")
+                continue
         
-        # Process the batch
-        for j, example_data in enumerate(tqdm(batch_examples, desc=f"Processing batch {i//args.batch_size + 1}/{(len(sample_indices) + args.batch_size - 1)//args.batch_size}")):
-            idx = example_data["sample_index"]
-            formatted_prompt = example_data["prompt"]
-            options = example_data["options"]
-            gold_answer = example_data["gold_answer"]
+        # Process the batch based on template type
+        if template_name == "simple":
+            # For simple template, use the optimized batch log-likelihood scoring
+            all_prompts = [sample["prompt"] for sample in batch_data]
+            all_options = [sample["options"] for sample in batch_data]
             
-            try:
-                # Use single-pass log likelihood scoring.
-                generated_text = ""
-                if template_name == "simple":
-                    pred_answer = get_mc_pred_answer_simple(formatted_prompt, options, pipe.model, pipe.tokenizer) if options else None
-                else:
-                    # For CoT templates, we can batch the generation part
-                    if j == 0 and batch_prompts:  # Only process once for the whole batch
-                        # Tokenize all prompts in the batch
-                        inputs = pipe.tokenizer(batch_prompts, return_tensors="pt", padding=True)
-                        inputs = {k: v.to(pipe.model.device) for k, v in inputs.items()}
-                        
-                        # Set generation parameters
-                        generation_kwargs = {
-                            "max_new_tokens": MAX_NEW_TOKENS,
-                            "min_new_tokens": MIN_NEW_TOKENS,
-                            "do_sample": False,  # Deterministic for regular mode
-                            "pad_token_id": pipe.tokenizer.eos_token_id,
-                            "no_repeat_ngram_size": 3,  # Prevent repetitive text
-                            # Explicitly set temperature and top_p to None to override model defaults
-                            "temperature": None,
-                            "top_p": None,
-                            "top_k": None
-                        }
-                        
-                        # Generate outputs for all prompts in the batch
-                        with torch.no_grad():
-                            outputs = pipe.model.generate(**inputs, **generation_kwargs)
-                            
-                            # Decode all outputs
-                            batch_generated_texts = pipe.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-                    
-                    if template_name != "simple":
-                        # Get the generated text for this example
-                        generated_text = batch_generated_texts[j] if j < len(batch_generated_texts) else ""
-                        
-                        # Ensure the generated text ends with 'Answer:'
-                        if not generated_text.strip().endswith("Answer:"):
-                            base_context = generated_text.strip() + "\nFinal Answer:"
-                        else:
-                            base_context = generated_text.strip()
-                        
-                        # Create candidate letters for options
-                        candidate_letters = [chr(65 + k) for k in range(len(options))]
-                        scores = {}
-                        
-                        # Tokenize with proper attention mask
-                        base_inputs = pipe.tokenizer(base_context, return_tensors="pt", padding=True)
-                        base_inputs = {k: v.to(pipe.model.device) for k, v in base_inputs.items()}
-                        base_length = base_inputs["input_ids"].shape[1]
-                        
-                        for letter in candidate_letters:
-                            candidate_text = " " + letter
-                            full_input = base_context + candidate_text
-                            
-                            # Tokenize with proper attention mask
-                            tokenized = pipe.tokenizer(full_input, return_tensors="pt", padding=True)
-                            tokenized = {k: v.to(pipe.model.device) for k, v in tokenized.items()}
-                            
-                            candidate_len = tokenized["input_ids"].shape[1] - base_length
-                            labels = tokenized["input_ids"].clone()
-                            labels[:, :base_length] = -100
-                            
-                            with torch.no_grad():
-                                outputs = pipe.model(input_ids=tokenized["input_ids"], 
-                                                   attention_mask=tokenized["attention_mask"], 
-                                                   labels=labels)
-                            
-                            loss = outputs.loss.item()
-                            total_loss = loss * candidate_len
-                            loglikelihood = -total_loss
-                            scores[letter] = loglikelihood
-                        
-                        best_letter = max(scores, key=scores.get)
-                        pred_answer = mapping.get(best_letter, best_letter)
-
-                is_correct = False
-                if pred_answer is not None and gold_answer is not None:
-                    is_correct = str(pred_answer).upper() == str(gold_answer).upper()
-
+            # Get predictions for all samples at once
+            predictions = get_mc_pred_answer_simple_batch(all_prompts, all_options, pipe.model, pipe.tokenizer)
+            
+            # Store predictions for each sample
+            for i, pred in enumerate(predictions):
+                if i < len(batch_data):
+                    batch_data[i]["pred_answer"] = pred
+        else:
+            # For CoT templates, use the optimized batch CoT generation and log-likelihood scoring
+            all_prompts = [sample["prompt"] for sample in batch_data]
+            all_options = [sample["options"] for sample in batch_data]
+            
+            # Generate CoT and get predictions for all samples at once
+            pred_results = get_mc_pred_answer_with_cot_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=0.0)
+            
+            # Store predictions and generated text for each sample
+            for i, (pred, generated_text) in enumerate(pred_results):
+                if i < len(batch_data):
+                    batch_data[i]["pred_answer"] = pred
+                    batch_data[i]["generated_text"] = generated_text
+        
+        # Process results for each sample in the batch
+        for sample_data in batch_data:
+            pred_answer = sample_data.get("pred_answer")
+            
+            if pred_answer is not None:
+                is_correct = str(pred_answer).upper() == str(sample_data["gold_answer"]).upper()
                 if is_correct:
                     correct += 1
-                total += 1
-
+                
+                # Format result for output
                 result = {
-                    "sample_index": idx,
-                    "question": example_data["question"],
-                    "prompt": formatted_prompt,
-                    "generated_text": generated_text,
+                    "sample_index": sample_data["sample_idx"],
+                    "question": sample_data["question"],
+                    "prompt": sample_data["prompt"],
+                    "generated_text": sample_data["generated_text"],
                     "pred_answer": pred_answer,
-                    "gold_answer": gold_answer,
+                    "gold_answer": sample_data["gold_answer"],
                     "is_correct": is_correct
                 }
                 
-                batch_results.append(result)
                 results.append(result)
-
+                
                 if args.debug:
-                    print(f"\n{'='*80}")
-                    print(f"SAMPLE INDEX: {idx}")
-                    print(f"{'='*80}")
-                    print(f"\n--- PROMPT ---\n{formatted_prompt}")
-                    
-                    if generated_text:
-                        print(f"\n--- GENERATED CHAIN-OF-THOUGHT ---\n{generated_text}")
-                    
-                    print(f"\n--- RESULTS ---")
-                    print(f"Predicted answer (log likelihood): {pred_answer}")
-                    print(f"Gold answer: {gold_answer}")
-                    print(f"Correct: {is_correct}")
-                    print(f"{'='*80}")
-
-            except Exception as e:
-                if args.debug:
-                    print(f"\n{'='*80}")
-                    print(f"ERROR processing sample index {idx}: {str(e)}")
-                    print(f"{'='*80}")
+                    print(f"Sample {sample_data['sample_idx']} - Predicted: {pred_answer}, Gold: {sample_data['gold_answer']}, Correct: {is_correct}")
+            
+            total += 1
         
-        # Print batch summary if debug is enabled
-        if args.debug and batch_results:
-            batch_correct = sum(1 for r in batch_results if r["is_correct"])
-            batch_total = len(batch_results)
-            batch_acc = batch_correct / batch_total if batch_total else 0
-            print(f"\nBatch {i//args.batch_size + 1} Accuracy: {batch_acc:.2%} ({batch_correct}/{batch_total})")
+        # Print batch progress
+        accuracy = correct / total if total > 0 else 0
+        print(f"Batch {batch_idx+1}/{num_batches} - Accuracy: {accuracy:.2%} ({correct}/{total})")
     
     return correct, total, results 
