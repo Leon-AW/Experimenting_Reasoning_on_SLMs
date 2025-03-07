@@ -9,7 +9,7 @@ TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
-SELF_CONSISTENCY_PATHS = 10
+SELF_CONSISTENCY_PATHS = 15
 
 # CISC (Confidence-Informed Self-Consistency) parameters
 CISC_ENABLED = True
