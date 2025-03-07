@@ -1,17 +1,119 @@
 from tqdm import tqdm
 from .answer_extraction import extract_numeric_answer, extract_gold_gsm8k_answer, extract_drop_answer
 from .prompts import format_prompt
-from .config import DATASET_CONFIGS, MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, SELF_CONSISTENCY_PATHS, TOP_P, TOP_K, DO_SAMPLE, NUM_RETURN_SEQUENCES, SEED
+from .config import (
+    DATASET_CONFIGS, MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, 
+    SELF_CONSISTENCY_PATHS, TOP_P, TOP_K, DO_SAMPLE, NUM_RETURN_SEQUENCES, 
+    SEED, CISC_ENABLED, CISC_TEMPERATURE, CISC_METHOD,
+    CONFIDENCE_PROMPT_BINARY, CONFIDENCE_PROMPT_SCALE
+)
 import torch
 from collections import Counter
 import math
 import numpy as np
 import random
+import re  # For regex extraction
+
+# Import the confidence extraction function from multiple_choice_processor to avoid duplication
+try:
+    from .multiple_choice_processor import extract_confidence
+except ImportError:
+    # If import fails, define the function here
+    def extract_confidence(model, tokenizer, prompt, answer_text, method="p_true"):
+        """
+        Extract confidence score from the model based on its generated answer.
+        See multiple_choice_processor.py for full implementation.
+        """
+        if method == "response_probability":
+            # Use the model's probability of generating the response
+            inputs = tokenizer(prompt, return_tensors="pt")
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            
+            answer_tokens = tokenizer(answer_text, return_tensors="pt")["input_ids"][0]
+            answer_len = answer_tokens.shape[0]
+            
+            # Calculate log probability of the generated answer
+            with torch.no_grad():
+                outputs = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"])
+                logits = outputs.logits
+                
+                log_probs = 0
+                for i in range(answer_len):
+                    if i < logits.shape[1] - 1:
+                        next_token_logits = logits[0, i, :]
+                        next_token_probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                        if i < answer_tokens.shape[0]:
+                            token_id = answer_tokens[i]
+                            if token_id < next_token_probs.shape[0]:
+                                log_probs += torch.log(next_token_probs[token_id]).item()
+            
+            # Return normalized probability
+            return math.exp(log_probs / max(1, answer_len))
+        
+        elif method in ["p_true", "verbal_binary", "verbal_scale"]:
+            # Combine prompt, answer and confidence prompt
+            full_text = prompt + answer_text
+            
+            if method == "p_true" or method == "verbal_binary":
+                # Add binary confidence prompt
+                confidence_prompt = CONFIDENCE_PROMPT_BINARY
+            else:
+                # Add scale confidence prompt
+                confidence_prompt = CONFIDENCE_PROMPT_SCALE
+                
+            full_text += confidence_prompt
+            
+            # Tokenize the full text
+            inputs = tokenizer(full_text, return_tensors="pt")
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            
+            if method == "p_true":
+                # Calculate P(True) - probability assigned to token "1"
+                with torch.no_grad():
+                    outputs = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"])
+                    next_token_logits = outputs.logits[0, -1, :]
+                    next_token_probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                    
+                    # Get token IDs for "0" and "1"
+                    one_token_id = tokenizer.encode("1", add_special_tokens=False)[0]
+                    confidence = next_token_probs[one_token_id].item()
+                    return confidence
+            else:
+                # Generate confidence value
+                inputs = {k: v.to(model.device) for k, v in inputs.items()}
+                gen_tokens = model.generate(
+                    **inputs,
+                    max_new_tokens=10,
+                    num_return_sequences=1,
+                    pad_token_id=tokenizer.eos_token_id
+                )
+                
+                # Extract the confidence value
+                confidence_text = tokenizer.decode(gen_tokens[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+                
+                if method == "verbal_binary":
+                    # Extract 0 or 1
+                    if "1" in confidence_text[:5]:
+                        return 1.0
+                    else:
+                        return 0.0
+                else:
+                    # Extract numerical value from scale
+                    try:
+                        # Find numbers in the generated text
+                        numbers = re.findall(r'\d+', confidence_text)
+                        if numbers:
+                            confidence = float(numbers[0])
+                            return min(100, max(0, confidence)) / 100.0  # Normalize to [0, 1]
+                    except:
+                        return 0.5  # Default if parsing fails
+        
+        return 0.5  # Default confidence
 
 def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_indices):
     """
     Process numeric datasets (e.g., GSM8K, DROP) using self-consistency with efficient batching.
-    Optimized to generate multiple paths at once and process in parallel for maximum performance.
+    Now enhanced with Confidence-Informed Self-Consistency (CISC) for more efficient sampling.
     """
     # Set seeds for reproducibility
     random.seed(SEED)
@@ -74,11 +176,12 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     
                     batch_results.append({
                         "sample_idx": sample_idx,
+                        "passage": passage if args.dataset == "drop" else "",
                         "prompt": formatted_prompt,
                         "gold_answer": gold_answer,
                         "sc_answers": [],
                         "sc_texts": [],  # Store all generated texts
-                        "passage": passage if args.dataset == "drop" else ""
+                        "sc_confidences": [],  # Store confidence scores for CISC
                     })
                 except Exception as e:
                     if args.debug:
@@ -139,11 +242,33 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                                     if extracted_answer is not None:
                                         result["sc_answers"].append(extracted_answer)
                                         result["sc_texts"].append(model_response)  # Store the generated text
+                                        
+                                        # Extract confidence score for CISC if enabled
+                                        if CISC_ENABLED:
+                                            confidence = extract_confidence(
+                                                pipe.model,
+                                                pipe.tokenizer,
+                                                result["prompt"],
+                                                model_response,
+                                                method=CISC_METHOD
+                                            )
+                                            result["sc_confidences"].append(confidence)
                                 else:
                                     numeric_extracted = extract_numeric_answer(model_response)
                                     if numeric_extracted is not None:
                                         result["sc_answers"].append(str(int(numeric_extracted)))
                                         result["sc_texts"].append(model_response)  # Store the generated text
+                                        
+                                        # Extract confidence score for CISC if enabled
+                                        if CISC_ENABLED:
+                                            confidence = extract_confidence(
+                                                pipe.model,
+                                                pipe.tokenizer,
+                                                result["prompt"],
+                                                model_response,
+                                                method=CISC_METHOD
+                                            )
+                                            result["sc_confidences"].append(confidence)
                                 
                                 if path_idx == 0 and "generated_text" not in result:
                                     result["generated_text"] = model_response
@@ -154,8 +279,43 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
             
             for result in batch_results:
                 if result["sc_answers"]:
-                    answer_counts = Counter(result["sc_answers"])
-                    pred_answer = answer_counts.most_common(1)[0][0]
+                    if CISC_ENABLED and result["sc_confidences"]:
+                        # Using CISC: Confidence-weighted majority voting
+                        answer_confidences = {}
+                        
+                        # Ensure we have confidence scores for all answers
+                        if len(result["sc_confidences"]) < len(result["sc_answers"]):
+                            # Add default confidence scores for any missing values
+                            result["sc_confidences"].extend([0.5] * (len(result["sc_answers"]) - len(result["sc_confidences"])))
+                            
+                        # Softmax normalization of confidence scores with temperature
+                        confidences = np.array(result["sc_confidences"])
+                        
+                        # Apply temperature scaling
+                        scaled_confidences = confidences / CISC_TEMPERATURE
+                        
+                        # Softmax normalization
+                        max_conf = np.max(scaled_confidences)
+                        exp_confidences = np.exp(scaled_confidences - max_conf)
+                        normalized_confidences = exp_confidences / np.sum(exp_confidences)
+                        
+                        # Weighted majority vote
+                        for answer, confidence in zip(result["sc_answers"], normalized_confidences):
+                            if answer in answer_confidences:
+                                answer_confidences[answer] += confidence
+                            else:
+                                answer_confidences[answer] = confidence
+                        
+                        # Get the answer with highest weighted count
+                        pred_answer = max(answer_confidences, key=answer_confidences.get)
+                        
+                        # Store the confidence value for logging
+                        confidence_value = answer_confidences[pred_answer]
+                    else:
+                        # Standard self-consistency: use most frequent answer
+                        answer_counts = Counter(result["sc_answers"])
+                        pred_answer = answer_counts.most_common(1)[0][0]
+                        confidence_value = answer_counts[pred_answer] / len(result["sc_answers"])
                     
                     # For DROP dataset, normalize answers before comparison
                     if args.dataset == "drop" and pred_answer is not None and result["gold_answer"] is not None:
@@ -183,31 +343,37 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     # Include all SC paths in results
                     results.append({
                         "sample_index": result["sample_idx"],
+                        "passage": result["passage"],
                         "prompt": result["prompt"],
                         "generated_text": result.get("generated_text", ""),
                         "pred_answer": pred_answer,
                         "gold_answer": result["gold_answer"],
                         "is_correct": is_correct,
-                        "sc_paths": [{"answer": ans, "text": txt} for ans, txt in zip(result["sc_answers"], result["sc_texts"])],
-                        "passage": result.get("passage", "")
+                        "confidence": confidence_value,
+                        "sc_paths": [
+                            {"answer": ans, "text": txt, "confidence": conf} 
+                            for ans, txt, conf in zip(
+                                result["sc_answers"], 
+                                result["sc_texts"], 
+                                result["sc_confidences"] if CISC_ENABLED and result["sc_confidences"] else [1.0] * len(result["sc_answers"])
+                            )
+                        ]
                     })
                     
                     if args.debug:
-                        confidence = answer_counts[pred_answer] / len(result["sc_answers"])
                         print(f"Sample {result['sample_idx']} - Predicted: {pred_answer}, Gold: {result['gold_answer']}, "
-                              f"Correct: {is_correct}, Confidence: {confidence:.2f}, "
+                              f"Correct: {is_correct}, {'CISC' if CISC_ENABLED else 'SC'} Confidence: {confidence_value:.2f}, "
                               f"SC Paths: {len(result['sc_answers'])}/{SELF_CONSISTENCY_PATHS}")
-                        if args.dataset == "drop":
-                            print(f"Passage: {result.get('passage', '')}")
                 else:
-                    total += 1
+                    # Skip samples with no extracted answers
                     if args.debug:
                         print(f"Sample {result['sample_idx']} - No answers extracted")
             
+            # Print batch progress
             accuracy = correct / total if total > 0 else 0
             pbar.set_postfix({"Accuracy": f"{accuracy:.2%}", "Correct": f"{correct}/{total}"})
             pbar.update(1)
-
+    
     return correct, total, results
 
 def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_samples):
@@ -346,12 +512,12 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         passage = batch_passages[idx] if args.dataset == "drop" else ""
                         result = {
                             "sample_index": i + idx,
+                            "passage": passage,
                             "prompt": prompt,
                             "generated_text": model_response,
                             "pred_answer": pred_answer_str,
                             "gold_answer": gold_answer,
                             "is_correct": is_correct,
-                            "passage": passage
                         }
                         
                         results.append(result)

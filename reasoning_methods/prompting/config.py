@@ -9,7 +9,14 @@ TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
-SELF_CONSISTENCY_PATHS = 20
+SELF_CONSISTENCY_PATHS = 10
+
+# CISC (Confidence-Informed Self-Consistency) parameters
+CISC_ENABLED = True
+CISC_TEMPERATURE = 0.1  # Temperature for confidence normalization
+CISC_METHOD = "p_true"  # Options: "p_true", "verbal_binary", "verbal_scale", "response_probability"
+CONFIDENCE_PROMPT_BINARY = "Now I will rate my confidence in the proposed answer as either 0 or 1.\nProposed confidence: ("
+CONFIDENCE_PROMPT_SCALE = "Now I will rate my confidence in the proposed answer on a scale of 0-100.\nProposed confidence: ("
 
 # Dataset configurations
 DATASET_CONFIGS = {
