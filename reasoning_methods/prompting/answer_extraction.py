@@ -154,63 +154,74 @@ def extract_multiple_choice_answer(generated_text):
 def extract_numeric_answer(generated_text):
     """
     Extract numeric answer from generated text and round up at x.5 or higher, otherwise round down.
+    
+    Updated:
+    - If there's a calculation in the final answer line, extract the last number (after the last '=')
+    - Otherwise extract the first number after phrases like "The final answer is:"
     """
-    # First try to find "The final answer is" pattern
-    final_answer_patterns = [
-        r"The final answer is:?\s*\$?\\?\s*(?:boxed{)?(\d[\d,]*(?:\.\d+)?)}?",  # Matches LaTeX \boxed{} and similar
-        r"The final answer is:?\s*\$?([\d,]+(?:\.\d+)?)",  # Regular number pattern
-        r"The final answer is:?\s*\$?\s*(?:is\s+)?(\d[\d,]*(?:\.\d+)?)",  # More flexible pattern
-    ]
+    import re
     
-    for pattern in final_answer_patterns:
-        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
-        if matches:
-            match = matches[-1]  # Take the last match
-            clean_number = match.group(1).replace(',', '').replace('$', '').replace('\\', '').strip()
-            try:
-                return str(int(float(clean_number) + 0.5))
-            except ValueError:
-                continue
+    # First try: Look for "The final answer is:" followed by a calculation with '='
+    # Extract the LAST number after the LAST '=' in that line
+    final_answer_calc_pattern = re.compile(
+        r"(?:The final answer is|Answer(?:\s+is)?):?.*?=\s*\$?\\?\s*(\d[\d,]*(?:\.\d+)?)(?=[^\d=]*(?:\n|\.|$))",
+        re.IGNORECASE
+    )
+    
+    # Find all matches and take the last one (in case there are multiple calculations)
+    matches = list(final_answer_calc_pattern.finditer(generated_text))
+    if matches:
+        match = matches[-1]
+        try:
+            # Clean the extracted number string and return rounded value
+            return str(int(float(match.group(1).replace(',', '').replace('$', '').replace('\\', '')) + 0.5))
+        except ValueError:
+            pass  # Fall through to next pattern if conversion fails
 
-    # Look for "Answer:" or "Answer is:" followed by a number
+    # Second try: no '=' after the phrase, so extract the first number immediately following the phrase
+    no_eq_pattern = re.compile(
+        r"(?:The final answer is|Answer(?:\s+is)?):?\s*\$?\\?\s*(\d[\d,]*(?:\.\d+)?)",
+        re.IGNORECASE
+    )
+    m = no_eq_pattern.search(generated_text)
+    if m:
+        try:
+            return str(int(float(m.group(1).replace(',', '').replace('$', '').replace('\\', '')) + 0.5))
+        except ValueError:
+            pass
+
+    # Third try: Look for the last occurrence of "=" and extract the number after it
+    last_eq_pattern = re.compile(r"=\s*\$?\\?\s*(\d[\d,]*(?:\.\d+)?)(?=[^\d=]*(?:\n|\.|$))")
+    matches = list(last_eq_pattern.finditer(generated_text))
+    if matches:
+        match = matches[-1]  # Take the last match
+        try:
+            return str(int(float(match.group(1).replace(',', '').replace('$', '').replace('\\', '')) + 0.5))
+        except ValueError:
+            pass
+
+    # Fallback patterns: try looking for "Answer:" or similar patterns
     answer_patterns = [
-        r"[Aa]nswer(?:\s+is)?:\s*=\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match number after equals sign
-        r"[Aa]nswer(?:\s+is)?:\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",  # Match first number after Answer:
-        r"[Aa]nswer(?:\s*[^=\n]*)?=\s*[^=\n]*?(\d[\d,]*(?:\.\d+)?)\s*$"  # Match final number in equation after Answer:
+        r"[Aa]nswer(?:\s+is)?:\s*=\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",
+        r"[Aa]nswer(?:\s+is)?:\s*(\d[\d,]*(?:\.\d+)?)[^a-zA-Z]*",
+        r"[Aa]nswer(?:\s*[^=\n]*)?=\s*[^=\n]*?(\d[\d,]*(?:\.\d+)?)\s*$"
     ]
-    
     for pattern in answer_patterns:
-        matches = list(re.finditer(pattern, generated_text))  # Removed re.IGNORECASE since we handle case in pattern
+        matches = list(re.finditer(pattern, generated_text))
         if matches:
             match = matches[-1]  # Take the last match
-            clean_number = match.group(1).replace(',', '').replace('$', '')
+            number_str = match.group(1).replace(',', '').replace('$', '')
             try:
-                return str(int(float(clean_number) + 0.5))
+                return str(int(float(number_str) + 0.5))
             except ValueError:
                 continue
 
-    # If no calculation found, try other patterns
-    other_patterns = [
-        r"(?:answer|solution)(?:\s+is)?:?\s*\$?\s*(\d[\d,]*(?:\.\d+)?)",
-        r"=\s*(\d[\d,]*(?:\.\d+)?)\s*$",
-    ]
-    
-    for pattern in other_patterns:
-        matches = list(re.finditer(pattern, generated_text, re.IGNORECASE))
-        if matches:
-            match = matches[-1]  # Take the last match
-            clean_number = match.group(1).replace(',', '').replace('$', '')
-            try:
-                return str(int(float(clean_number) + 0.5))
-            except ValueError:
-                continue
-
-    # Last resort: find the last number in the text
+    # Last resort: find the very last number in the text
     numbers = re.findall(r"\d[\d,]*(?:\.\d+)?", generated_text)
     if numbers:
-        clean_number = numbers[-1].replace(',', '').replace('$', '')
+        number_str = numbers[-1].replace(',', '').replace('$', '')
         try:
-            return str(int(float(clean_number) + 0.5))
+            return str(int(float(number_str) + 0.5))
         except ValueError:
             pass
 

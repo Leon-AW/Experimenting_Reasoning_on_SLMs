@@ -1,11 +1,12 @@
 from tqdm import tqdm
 from collections import Counter
 from .prompts import format_prompt
-from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS, TOP_P, TOP_K
+from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS, TOP_P, TOP_K, SEED
 import torch
 import numpy as np
 import math
 import os
+import random
 
 # Try to import optimization config if available
 try:
@@ -71,8 +72,8 @@ def get_mc_pred_answer_with_cot_batch(prompts, options_list, model, tokenizer, t
     # Process each generated text and compute log-likelihoods
     for i, (generated_text, options) in enumerate(zip(generated_texts, options_list)):
         # Ensure the generated text ends with 'Answer:'
-        if not generated_text.strip().endswith("Answer:"):
-            base_context = generated_text.strip() + "\nAnswer:"
+        if not generated_text.strip().endswith("Final Answer:"):
+            base_context = generated_text.strip() + "\nFinal Answer:"
         else:
             base_context = generated_text.strip()
 
@@ -243,16 +244,67 @@ def get_mc_pred_answer_with_cot(prompt, options, model, tokenizer, temperature=T
 
 def get_mc_pred_answer_simple(prompt, options, model, tokenizer, temperature=0.0):
     """
-    Computes the log-likelihood for each answer option, without generating CoT first.
+    Berechnet die Loglikelihood für jede Antwortoption, ohne erst CoT zu generieren.
     """
-    results = get_mc_pred_answer_simple_batch([prompt], [options], model, tokenizer, temperature)
-    return results[0] if results else None
+    if not prompt.strip().endswith("Answer:"):
+        base_context = prompt.strip() + "\nAnswer:"
+    else:
+        base_context = prompt.strip()
+        
+    candidate_letters = [chr(65 + i) for i in range(len(options))]
+    scores = {}
+    
+    # Tokenize with proper attention mask
+    base_inputs = tokenizer(base_context, return_tensors="pt", padding=True)
+    base_inputs = {k: v.to(model.device) for k, v in base_inputs.items()}
+    base_length = base_inputs["input_ids"].shape[1]
+    
+    for letter in candidate_letters:
+        candidate_text = " " + letter
+        full_input = base_context + candidate_text
+        
+        # Tokenize with proper attention mask
+        tokenized = tokenizer(full_input, return_tensors="pt", padding=True)
+        tokenized = {k: v.to(model.device) for k, v in tokenized.items()}
+        
+        candidate_len = tokenized["input_ids"].shape[1] - base_length
+        labels = tokenized["input_ids"].clone()
+        labels[:, :base_length] = -100
+        
+        with torch.no_grad():
+            outputs = model(input_ids=tokenized["input_ids"], 
+                           attention_mask=tokenized["attention_mask"], 
+                           labels=labels)
+        loss = outputs.loss.item()
+        total_loss = loss * candidate_len
+        loglikelihood = -total_loss  
+        scores[letter] = loglikelihood
+    
+    if temperature == 0.0:
+        best_letter = max(scores, key=scores.get)
+    else:
+        logits = np.array([scores[letter] for letter in candidate_letters])
+        logits = logits / temperature
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+        choice_idx = np.random.choice(len(candidate_letters), p=probs)
+        best_letter = candidate_letters[choice_idx]
+    
+    mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+    return mapping.get(best_letter, best_letter)
 
 def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indices, mapping):
     """
     Process multiple-choice datasets using self-consistency with optimized batching.
     Efficiently generates multiple paths in parallel for maximum performance.
     """
+    # Set seeds for reproducibility
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+
     correct = 0
     total = 0
     results = []
@@ -272,146 +324,138 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
     # Process in batches of samples
     num_batches = math.ceil(len(sample_indices) / samples_per_batch)
     
-    for batch_idx in range(num_batches):
-        batch_start = batch_idx * samples_per_batch
-        batch_end = min((batch_idx + 1) * samples_per_batch, len(sample_indices))
-        batch_indices = sample_indices[batch_start:batch_end]
-        
-        print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
-        
-        # Prepare all samples in the batch
-        batch_data = []
-        
-        for sample_idx in batch_indices:
-            try:
-                example = dataset[sample_idx]
-                question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+    # Main progress bar for batches
+    with tqdm(total=num_batches, desc="Processing batches") as pbar:
+        for batch_idx in range(num_batches):
+            batch_start = batch_idx * samples_per_batch
+            batch_end = min((batch_idx + 1) * samples_per_batch, len(sample_indices))
+            batch_indices = sample_indices[batch_start:batch_end]
+            
+            print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
+            
+            # Prepare all samples in the batch
+            batch_data = []
+            
+            # Progress bar for samples within batch
+            for sample_idx in tqdm(batch_indices, desc=f"Processing samples in batch {batch_idx+1}/{num_batches}", leave=False):
+                try:
+                    example = dataset[sample_idx]
+                    question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
+                    gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-                # Normalize the gold_answer to numeric if it is given as letter
-                if gold_answer.upper() in mapping:
-                    gold_answer = mapping[gold_answer.upper()]
+                    # Normalize the gold_answer to numeric if it is given as letter
+                    if gold_answer.upper() in mapping:
+                        gold_answer = mapping[gold_answer.upper()]
 
-                # Get available options and (if available) passage context
-                options = None
-                passage = None
-                if args.dataset == "race":
-                    options = example.get("options", [])
-                    passage = example.get("article", "") or example.get("passage", "")
-                elif args.dataset == "arc":
-                    choices = example.get("choices", {})
-                    if isinstance(choices, dict) and "text" in choices:
-                        options = choices["text"]
-                    else:
-                        continue
-                elif args.dataset == "mmlu":
-                    options = example.get("choices")
-                    if not options:
-                        options = [example.get(f"choice_{i}", "") for i in range(4)]
-                elif args.dataset == "agieval":
-                    options = example.get("options", [])
-                
-                formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                
-                batch_data.append({
-                    "sample_idx": sample_idx,
-                    "question": question,
-                    "gold_answer": gold_answer,
-                    "prompt": formatted_prompt,
-                    "options": options,
-                    "sc_answers": [],
-                    "generated_text": ""
-                })
-            except Exception as e:
-                if args.debug:
-                    print(f"Error preparing sample {sample_idx}: {e}")
-                continue
-        
-        # Process self-consistency paths in sub-batches
-        if template_name == "simple":
-            # For simple template, we use the optimized batch log-likelihood scoring
-            for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):
-                path_batch_end = min(path_batch_idx + effective_paths_per_batch, SELF_CONSISTENCY_PATHS)
-                paths_in_current_batch = path_batch_end - path_batch_idx
-                
-                # For each path in the current batch
-                for _ in range(paths_in_current_batch):
-                    # Prepare prompts and options for all samples
-                    all_prompts = [sample["prompt"] for sample in batch_data]
-                    all_options = [sample["options"] for sample in batch_data]
+                    # Get available options and (if available) passage context
+                    options = None
+                    passage = None
+                    if args.dataset == "race":
+                        options = example.get("options", [])
+                        passage = example.get("article", "") or example.get("passage", "")
+                    elif args.dataset == "arc":
+                        choices = example.get("choices", {})
+                        if isinstance(choices, dict) and "text" in choices:
+                            options = choices["text"]
+                        else:
+                            continue
+                    elif args.dataset == "mmlu":
+                        options = example.get("choices")
+                        if not options:
+                            options = [example.get(f"choice_{i}", "") for i in range(4)]
+                    elif args.dataset == "agieval":
+                        options = example.get("options", [])
                     
-                    # Get predictions for all samples at once
-                    predictions = get_mc_pred_answer_simple_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE)
+                    formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                     
-                    # Store predictions for each sample
-                    for i, pred in enumerate(predictions):
-                        if i < len(batch_data) and pred is not None:
-                            batch_data[i]["sc_answers"].append(pred)
-        else:
-            # For CoT templates, we process paths in batches
-            for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):
-                path_batch_end = min(path_batch_idx + effective_paths_per_batch, SELF_CONSISTENCY_PATHS)
-                paths_in_current_batch = path_batch_end - path_batch_idx
-                
-                # For each path in the current batch
-                for _ in range(paths_in_current_batch):
-                    # Prepare prompts and options for all samples
-                    all_prompts = [sample["prompt"] for sample in batch_data]
-                    all_options = [sample["options"] for sample in batch_data]
-                    
-                    # Generate CoT and get predictions for all samples at once
-                    pred_results = get_mc_pred_answer_with_cot_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE)
-                    
-                    # Store predictions and generated text for each sample
-                    for i, (pred, generated_text) in enumerate(pred_results):
-                        if i < len(batch_data):
-                            if pred is not None:
-                                batch_data[i]["sc_answers"].append(pred)
-                            
-                            # Store the first generated text for display
-                            if not batch_data[i]["generated_text"] and generated_text:
-                                batch_data[i]["generated_text"] = generated_text
-        
-        # Process final answers for each sample in the batch
-        for sample_data in batch_data:
-            if sample_data["sc_answers"]:
-                # Use majority voting from self-consistency paths
-                answer_counts = Counter(sample_data["sc_answers"])
-                pred_answer = answer_counts.most_common(1)[0][0]
-                
-                is_correct = str(pred_answer).upper() == str(sample_data["gold_answer"]).upper()
-                if is_correct:
-                    correct += 1
-                
-                total += 1
-                
-                # Format result for output
-                result = {
-                    "sample_index": sample_data["sample_idx"],
-                    "question": sample_data["question"],
-                    "prompt": sample_data["prompt"],
-                    "generated_text": sample_data["generated_text"],
-                    "pred_answer": pred_answer,
-                    "gold_answer": sample_data["gold_answer"],
-                    "is_correct": is_correct
-                }
-                
-                results.append(result)
-                
-                if args.debug:
-                    confidence = answer_counts[pred_answer] / len(sample_data["sc_answers"])
-                    print(f"Sample {sample_data['sample_idx']} - Predicted: {pred_answer}, Gold: {sample_data['gold_answer']}, "
-                          f"Correct: {is_correct}, Confidence: {confidence:.2f}, "
-                          f"SC Paths: {len(sample_data['sc_answers'])}/{SELF_CONSISTENCY_PATHS}")
+                    batch_data.append({
+                        "sample_idx": sample_idx,
+                        "question": question,
+                        "gold_answer": gold_answer,
+                        "prompt": formatted_prompt,
+                        "options": options,
+                        "sc_answers": [],
+                        "sc_texts": [],  # Store all generated texts
+                        "generated_text": ""
+                    })
+                except Exception as e:
+                    if args.debug:
+                        print(f"Error preparing sample {sample_idx}: {e}")
+                    continue
+            
+            # Process self-consistency paths in sub-batches
+            if template_name == "simple":
+                # For simple template, we can't batch the log-likelihood scoring
+                for sample_data in batch_data:
+                    for _ in range(SELF_CONSISTENCY_PATHS):
+                        pred = get_mc_pred_answer_simple(sample_data["prompt"], sample_data["options"], pipe.model, pipe.tokenizer, temperature=TEMPERATURE) if sample_data["options"] else None
+                        if pred is not None:
+                            sample_data["sc_answers"].append(pred)
             else:
-                # No answers extracted
-                total += 1
-                if args.debug:
-                    print(f"Sample {sample_data['sample_idx']} - No answers extracted")
-        
-        # Print batch progress
-        accuracy = correct / total if total > 0 else 0
-        print(f"Batch {batch_idx+1}/{num_batches} - Accuracy: {accuracy:.2%} ({correct}/{total})")
+                # For CoT templates, we process paths in batches
+                for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):
+                    path_batch_end = min(path_batch_idx + effective_paths_per_batch, SELF_CONSISTENCY_PATHS)
+                    paths_in_current_batch = path_batch_end - path_batch_idx
+                    
+                    # For each path in the current batch
+                    for _ in range(paths_in_current_batch):
+                        # Prepare prompts and options for all samples
+                        all_prompts = [sample["prompt"] for sample in batch_data]
+                        all_options = [sample["options"] for sample in batch_data]
+                        
+                        # Generate CoT and get predictions for all samples at once
+                        pred_results = get_mc_pred_answer_with_cot_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE)
+                        
+                        # Store predictions and generated text for each sample
+                        for i, (pred, generated_text) in enumerate(pred_results):
+                            if i < len(batch_data):
+                                if pred is not None:
+                                    batch_data[i]["sc_answers"].append(pred)
+                                
+                                # Store the first generated text for display
+                                if not batch_data[i]["generated_text"] and generated_text:
+                                    batch_data[i]["generated_text"] = generated_text
+            
+            # Process final answers for each sample in the batch
+            for sample_data in batch_data:
+                if sample_data["sc_answers"]:
+                    # Use majority voting from self-consistency paths
+                    answer_counts = Counter(sample_data["sc_answers"])
+                    pred_answer = answer_counts.most_common(1)[0][0]
+                    
+                    is_correct = str(pred_answer).upper() == str(sample_data["gold_answer"]).upper()
+                    if is_correct:
+                        correct += 1
+                    
+                    total += 1
+                    
+                    # Include all SC paths in results
+                    results.append({
+                        "sample_index": sample_data["sample_idx"],
+                        "question": sample_data["question"],
+                        "prompt": sample_data["prompt"],
+                        "generated_text": sample_data["generated_text"],
+                        "pred_answer": pred_answer,
+                        "gold_answer": sample_data["gold_answer"],
+                        "is_correct": is_correct,
+                        "sc_paths": [{"answer": ans, "text": txt} for ans, txt in zip(sample_data["sc_answers"], sample_data["sc_texts"])]
+                    })
+                    
+                    if args.debug:
+                        confidence = answer_counts[pred_answer] / len(sample_data["sc_answers"])
+                        print(f"Sample {sample_data['sample_idx']} - Predicted: {pred_answer}, Gold: {sample_data['gold_answer']}, "
+                              f"Correct: {is_correct}, Confidence: {confidence:.2f}, "
+                              f"SC Paths: {len(sample_data['sc_answers'])}/{SELF_CONSISTENCY_PATHS}")
+                else:
+                    # No answers extracted
+                    total += 1
+                    if args.debug:
+                        print(f"Sample {sample_data['sample_idx']} - No answers extracted")
+            
+            # Print batch progress
+            accuracy = correct / total if total > 0 else 0
+            pbar.set_postfix({"Accuracy": f"{accuracy:.2%}", "Correct": f"{correct}/{total}"})
+            pbar.update(1)
     
     return correct, total, results
 
@@ -420,6 +464,13 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
     Process multiple-choice datasets without self-consistency using optimized batching.
     Efficiently processes samples in parallel for maximum performance.
     """
+    # Set seeds for reproducibility
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+
     correct = 0
     total = 0
     results = []
@@ -430,115 +481,120 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
     # Process in batches
     num_batches = math.ceil(len(sample_indices) / batch_size)
     
-    for batch_idx in range(num_batches):
-        batch_start = batch_idx * batch_size
-        batch_end = min((batch_idx + 1) * batch_size, len(sample_indices))
-        batch_indices = sample_indices[batch_start:batch_end]
-        
-        print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
-        
-        # Prepare all samples in the batch
-        batch_data = []
-        
-        for sample_idx in batch_indices:
+    # Main progress bar for batches
+    with tqdm(total=num_batches, desc="Processing batches") as pbar:
+        for batch_idx in range(num_batches):
+            batch_start = batch_idx * batch_size
+            batch_end = min((batch_idx + 1) * batch_size, len(sample_indices))
+            batch_indices = sample_indices[batch_start:batch_end]
+            
+            print(f"Processing batch {batch_idx+1}/{num_batches} with {len(batch_indices)} samples")
+            
+            # Prepare all samples in the batch
+            batch_data = []
+            
+            # Progress bar for samples within batch
+            for sample_idx in tqdm(batch_indices, desc=f"Processing samples in batch {batch_idx+1}/{num_batches}", leave=False):
+                try:
+                    example = dataset[sample_idx]
+                    question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
+                    gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
+
+                    # Normalize the gold_answer to numeric
+                    if gold_answer.upper() in mapping:
+                        gold_answer = mapping[gold_answer.upper()]
+
+                    options = None
+                    passage = None
+                    if args.dataset == "race":
+                        options = example.get("options", [])
+                        passage = example.get("article", "") or example.get("passage", "")
+                    elif args.dataset == "arc":
+                        choices = example.get("choices", {})
+                        if isinstance(choices, dict) and "text" in choices:
+                            options = choices["text"]
+                        else:
+                            continue
+                    elif args.dataset == "mmlu":
+                        options = example.get("choices")
+                        if not options:
+                            options = [example.get(f"choice_{i}", "") for i in range(4)]
+                    elif args.dataset == "agieval":
+                        options = example.get("options", [])
+
+                    formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
+                    
+                    batch_data.append({
+                        "sample_idx": sample_idx,
+                        "question": question,
+                        "gold_answer": gold_answer,
+                        "prompt": formatted_prompt,
+                        "options": options,
+                        "generated_text": ""
+                    })
+                except Exception as e:
+                    if args.debug:
+                        print(f"Error preparing sample {sample_idx}: {e}")
+                    continue
+            
+            if not batch_data:
+                continue
+            
+            all_prompts = [data["prompt"] for data in batch_data]
+            all_options = [data["options"] for data in batch_data]
+            
             try:
-                example = dataset[sample_idx]
-                question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
-                gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
-
-                # Normalize the gold_answer to numeric
-                if gold_answer.upper() in mapping:
-                    gold_answer = mapping[gold_answer.upper()]
-
-                options = None
-                passage = None
-                if args.dataset == "race":
-                    options = example.get("options", [])
-                    passage = example.get("article", "") or example.get("passage", "")
-                elif args.dataset == "arc":
-                    choices = example.get("choices", {})
-                    if isinstance(choices, dict) and "text" in choices:
-                        options = choices["text"]
-                    else:
-                        continue
-                elif args.dataset == "mmlu":
-                    options = example.get("choices")
-                    if not options:
-                        options = [example.get(f"choice_{i}", "") for i in range(4)]
-                elif args.dataset == "agieval":
-                    options = example.get("options", [])
-
-                formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
-                
-                batch_data.append({
-                    "sample_idx": sample_idx,
-                    "question": question,
-                    "gold_answer": gold_answer,
-                    "prompt": formatted_prompt,
-                    "options": options,
-                    "generated_text": ""
-                })
+                if template_name == "simple":
+                    # Use single-pass log likelihood scoring.
+                    for i, sample_data in enumerate(batch_data):
+                        pred_answer = get_mc_pred_answer_simple(sample_data["prompt"], sample_data["options"], pipe.model, pipe.tokenizer) if sample_data["options"] else None
+                        sample_data["pred_answer"] = pred_answer
+                        sample_data["generated_text"] = ""  # No generated text for simple template
+                else:
+                    results_batch = get_mc_pred_answer_with_cot_batch(
+                        all_prompts,
+                        all_options,
+                        pipe.model,
+                        pipe.tokenizer,
+                        temperature=TEMPERATURE
+                    )
+                    
+                    for sample_data, (pred_answer, generated_text) in zip(batch_data, results_batch):
+                        sample_data["pred_answer"] = pred_answer
+                        sample_data["generated_text"] = generated_text
+            
             except Exception as e:
                 if args.debug:
-                    print(f"Error preparing sample {sample_idx}: {e}")
+                    print(f"Error in batch generation: {e}")
                 continue
-        
-        # Process the batch based on template type
-        if template_name == "simple":
-            # For simple template, use the optimized batch log-likelihood scoring
-            all_prompts = [sample["prompt"] for sample in batch_data]
-            all_options = [sample["options"] for sample in batch_data]
             
-            # Get predictions for all samples at once
-            predictions = get_mc_pred_answer_simple_batch(all_prompts, all_options, pipe.model, pipe.tokenizer)
-            
-            # Store predictions for each sample
-            for i, pred in enumerate(predictions):
-                if i < len(batch_data):
-                    batch_data[i]["pred_answer"] = pred
-        else:
-            # For CoT templates, use the optimized batch CoT generation and log-likelihood scoring
-            all_prompts = [sample["prompt"] for sample in batch_data]
-            all_options = [sample["options"] for sample in batch_data]
-            
-            # Generate CoT and get predictions for all samples at once
-            pred_results = get_mc_pred_answer_with_cot_batch(all_prompts, all_options, pipe.model, pipe.tokenizer, temperature=0.0)
-            
-            # Store predictions and generated text for each sample
-            for i, (pred, generated_text) in enumerate(pred_results):
-                if i < len(batch_data):
-                    batch_data[i]["pred_answer"] = pred
-                    batch_data[i]["generated_text"] = generated_text
-        
-        # Process results for each sample in the batch
-        for sample_data in batch_data:
-            pred_answer = sample_data.get("pred_answer")
-            
-            if pred_answer is not None:
-                is_correct = str(pred_answer).upper() == str(sample_data["gold_answer"]).upper()
-                if is_correct:
-                    correct += 1
+            for sample_data in batch_data:
+                pred_answer = sample_data.get("pred_answer")
                 
-                # Format result for output
-                result = {
-                    "sample_index": sample_data["sample_idx"],
-                    "question": sample_data["question"],
-                    "prompt": sample_data["prompt"],
-                    "generated_text": sample_data["generated_text"],
-                    "pred_answer": pred_answer,
-                    "gold_answer": sample_data["gold_answer"],
-                    "is_correct": is_correct
-                }
+                if pred_answer is not None:
+                    is_correct = str(pred_answer).upper() == str(sample_data["gold_answer"]).upper()
+                    if is_correct:
+                        correct += 1
+                    
+                    result = {
+                        "sample_index": sample_data["sample_idx"],
+                        "question": sample_data["question"],
+                        "prompt": sample_data["prompt"],
+                        "generated_text": sample_data["generated_text"],
+                        "pred_answer": pred_answer,
+                        "gold_answer": sample_data["gold_answer"],
+                        "is_correct": is_correct
+                    }
+                    
+                    results.append(result)
+                    
+                    if args.debug:
+                        print(f"Sample {sample_data['sample_idx']} - Predicted: {pred_answer}, Gold: {sample_data['gold_answer']}, Correct: {is_correct}")
                 
-                results.append(result)
-                
-                if args.debug:
-                    print(f"Sample {sample_data['sample_idx']} - Predicted: {pred_answer}, Gold: {sample_data['gold_answer']}, Correct: {is_correct}")
+                total += 1
             
-            total += 1
-        
-        # Print batch progress
-        accuracy = correct / total if total > 0 else 0
-        print(f"Batch {batch_idx+1}/{num_batches} - Accuracy: {accuracy:.2%} ({correct}/{total})")
+            accuracy = correct / total if total > 0 else 0
+            pbar.set_postfix({"Accuracy": f"{accuracy:.2%}", "Correct": f"{correct}/{total}"})
+            pbar.update(1)
     
     return correct, total, results 

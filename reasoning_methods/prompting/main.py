@@ -304,9 +304,20 @@ def main():
                 sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if args.self_consistency else ""
                 csv_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
                 with open(csv_file_path, mode='w', newline='') as file:
-                    writer = csv.DictWriter(file, fieldnames=["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
+                    # Add sc_paths to fieldnames if self-consistency is enabled
+                    fieldnames = ["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
+                    if args.self_consistency:
+                        fieldnames.append("sc_paths")
+                    
+                    writer = csv.DictWriter(file, fieldnames=fieldnames)
                     writer.writeheader()
-                    writer.writerows(results)
+                    
+                    # Write results, converting sc_paths to string if present
+                    for result in results:
+                        row = {k: v for k, v in result.items() if k in fieldnames}
+                        if args.self_consistency and "sc_paths" in result:
+                            row["sc_paths"] = str(result["sc_paths"])
+                        writer.writerow(row)
 
                 txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_total_accuracy.txt')
                 with open(txt_file_path, mode='w') as file:
