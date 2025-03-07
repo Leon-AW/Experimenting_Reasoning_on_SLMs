@@ -198,8 +198,8 @@ def main():
             for dataset_key, dataset_config in DATASET_CONFIGS.items():
                 print(f"\n{'='*50}\nDataset: {dataset_key}\n{'='*50}\n")
                 dataset = load_custom_dataset(dataset_config)
-                # Loop over self-consistency settings: first False then True
-                for sc in [False, True]:
+                # Loop over self-consistency settings: for 1b run both, for 3b run only False
+                for sc in ([False, True] if model_size == "1b" else [False]):
                     print(f"\n{'-'*50}\nSelf Consistency: {sc}\n{'-'*50}\n")
                     # Loop over every prompt template available
                     for template_name in PROMPT_TEMPLATES.keys():

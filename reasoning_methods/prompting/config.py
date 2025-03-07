@@ -42,13 +42,13 @@ DATASET_CONFIGS = {
         "answer_key": "answer",
         "is_mmlu": True
     },
-    # "drop": {
-    #     "name": "drop",
-    #     "split": None,
-    #     "subset": "validation",
-    #     "question_key": "question",
-    #     "answer_key": "answers_spans"
-    # },
+    "drop": {
+        "name": "drop",
+        "split": None,
+        "subset": "validation",
+        "question_key": "question",
+        "answer_key": "answers_spans"
+    },
     "agieval": {
         "name": "cais/agieval",
         "split": "test",
@@ -62,27 +62,33 @@ DATASET_CONFIGS = {
 PROMPT_TEMPLATES = {
     # Simple question prompt
     "simple": {
-        "numeric": """Question: {question} \n\nAnswer the question directly. Do not return any preamble, explanation, or reasoning.\n\nAnswer: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\nAnswer the question directly. Do not return any preamble, explanation, or reasoning.\n\nAnswer: """
+        "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\n"""
     },
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
-    "cot": {
-        "numeric": """Think step by step to answer the following question. Return the answer at the end of the response after a separator ####.\n\nQuestion: {question}\n\n""",
-        "multiple_choice": """Think step by step to answer the following question. Return the answer at the end of the response after a separator ####.\n\nQuestion: {question}\n\nOptions:\n{options}\n\n"""
-    },
-    # Chain of Draft: Thinking Faster by Writing Less: https://arxiv.org/abs/2502.18600
-    "draftCot": {
-        "numeric": """Think step by step, but only keep a minimum draft for each thinking step, with 5 words at most. Return the answer at the end of the response after a separator ####.\n\nQuestion: {question}\n\n""",
-        "multiple_choice": """Think step by step, but only keep a minimum draft for each thinking step, with 5 words at most. Return the answer at the end of the response after a separator ####.\n\nQuestion: {question} \n\nOptions:\n{options}\n\n"""
-    },
-    # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
-    "role": {
-        "numeric": """From now on, you are an excellent math professor. One of your students asks you the following question.\nYou explain the solution step by step and then return the answer at the end of the response after a separator ####.\n\nQuestion: {question}\n\n""",
-        "multiple_choice": """From now on, you are an excellent math professor. One of your students asks you the following question.\nYou explain the solution step by step and then return the answer at the end of the response after a separator ####.\n\nQuestion: {question} \n\nOptions:\n{options}\n\n"""
+    "chain": {
+        "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
+        "multiple_choice": """Question: {question} \n\nOptions:\n{options}
+
+        Let's solve this step-by-step: """
+            },
+            # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
+            "role": {
+                "numeric": """From now on, you are an excellent math teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
+        \n\nQuestion: {question}\n\nCorrect Answer: """,
+                "multiple_choice": """From now on, you are an excellen math teacher. One of your students wants to ask you a question. 
+
+        Question: {question}
+
+        Options:
+        {options}
+
+        Correct Answer: """
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
-        "numeric": """Question: {question} \n\nLet's first understand the question, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step and return the answer at the end of the response after a separator ####.\n\n""",
+        "numeric": """Problem: {question} \n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step, and show the answer. 
+\n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
         "multiple_choice": """Question: {question}
 
 Options:

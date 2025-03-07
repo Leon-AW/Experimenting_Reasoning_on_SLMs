@@ -239,3 +239,38 @@ def extract_gold_gsm8k_answer(answer_text):
         return str(int(match.group(1)))
     else:
         raise ValueError("No valid answer found.")
+
+
+def extract_drop_answer(generated_text):
+    """
+    Extract answers from generated text for the DROP dataset.
+    This function handles both numeric answers and string-based answers.
+    
+    It first tries to extract a numeric answer using the existing extract_numeric_answer function.
+    If that fails, it attempts to extract a string answer using various patterns.
+    """
+    
+    # Pattern 1: Look for "The final answer is:" followed by text
+    # Extract the entire line after the pattern
+    final_answer_pattern = re.compile(
+        r"(?:The final answer is|Answer(?:\s+is)?|[Ss]olution:):?\s*(.*?)(?:\n|$)",        
+        re.IGNORECASE
+    )
+    m = final_answer_pattern.search(generated_text)
+    if m:
+        answer = m.group(1).strip()
+        # Check if the answer starts with a number - if so, don't use this pattern
+        if not re.match(r'^\d', answer):
+            # Clean up the answer (remove quotes, extra spaces, and trailing punctuation)
+            answer = answer.strip('"\'').rstrip('.,:;!?').strip()
+            # Return the full name with potential initials
+            if answer:
+                return answer
+    
+    # First try to extract a numeric answer
+    numeric_answer = extract_numeric_answer(generated_text)
+    if numeric_answer:
+        return numeric_answer
+    
+    # If all else fails, return None
+    return None

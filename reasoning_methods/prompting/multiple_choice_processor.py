@@ -370,7 +370,6 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                     
                     batch_data.append({
                         "sample_idx": sample_idx,
-                        "question": question,
                         "gold_answer": gold_answer,
                         "prompt": formatted_prompt,
                         "options": options,
@@ -432,7 +431,6 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                     # Include all SC paths in results
                     results.append({
                         "sample_index": sample_data["sample_idx"],
-                        "question": sample_data["question"],
                         "prompt": sample_data["prompt"],
                         "generated_text": sample_data["generated_text"],
                         "pred_answer": pred_answer,
@@ -526,7 +524,6 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
                     
                     batch_data.append({
                         "sample_idx": sample_idx,
-                        "question": question,
                         "gold_answer": gold_answer,
                         "prompt": formatted_prompt,
                         "options": options,
@@ -578,7 +575,6 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
                     
                     result = {
                         "sample_index": sample_data["sample_idx"],
-                        "question": sample_data["question"],
                         "prompt": sample_data["prompt"],
                         "generated_text": sample_data["generated_text"],
                         "pred_answer": pred_answer,

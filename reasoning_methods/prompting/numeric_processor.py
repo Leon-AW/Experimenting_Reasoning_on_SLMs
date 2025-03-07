@@ -1,5 +1,5 @@
 from tqdm import tqdm
-from .answer_extraction import extract_numeric_answer, extract_gold_gsm8k_answer
+from .answer_extraction import extract_numeric_answer, extract_gold_gsm8k_answer, extract_drop_answer
 from .prompts import format_prompt
 from .config import DATASET_CONFIGS, MIN_NEW_TOKENS, MAX_NEW_TOKENS, TEMPERATURE, SELF_CONSISTENCY_PATHS, TOP_P, TOP_K, DO_SAMPLE, NUM_RETURN_SEQUENCES, SEED
 import torch
@@ -60,6 +60,8 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
 
                     if args.dataset == "gsm8k":
                         gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
+                    elif args.dataset == "drop":
+                        gold_answer = raw_gold_answer.strip()
                     else:
                         gold_answer = extract_numeric_answer(raw_gold_answer)
 
@@ -74,9 +76,9 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                         "sample_idx": sample_idx,
                         "prompt": formatted_prompt,
                         "gold_answer": gold_answer,
-                        "question": question,
                         "sc_answers": [],
-                        "sc_texts": []  # Store all generated texts
+                        "sc_texts": [],  # Store all generated texts
+                        "passage": passage if args.dataset == "drop" else ""
                     })
                 except Exception as e:
                     if args.debug:
@@ -132,10 +134,16 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                                 generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
                                 model_response = generated_text[len(result["prompt"]):].strip()
                                 
-                                numeric_extracted = extract_numeric_answer(model_response)
-                                if numeric_extracted is not None:
-                                    result["sc_answers"].append(str(int(numeric_extracted)))
-                                    result["sc_texts"].append(model_response)  # Store the generated text
+                                if args.dataset == "drop":
+                                    extracted_answer = extract_drop_answer(model_response)
+                                    if extracted_answer is not None:
+                                        result["sc_answers"].append(extracted_answer)
+                                        result["sc_texts"].append(model_response)  # Store the generated text
+                                else:
+                                    numeric_extracted = extract_numeric_answer(model_response)
+                                    if numeric_extracted is not None:
+                                        result["sc_answers"].append(str(int(numeric_extracted)))
+                                        result["sc_texts"].append(model_response)  # Store the generated text
                                 
                                 if path_idx == 0 and "generated_text" not in result:
                                     result["generated_text"] = model_response
@@ -149,7 +157,24 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     answer_counts = Counter(result["sc_answers"])
                     pred_answer = answer_counts.most_common(1)[0][0]
                     
-                    is_correct = pred_answer == result["gold_answer"]
+                    # For DROP dataset, normalize answers before comparison
+                    if args.dataset == "drop" and pred_answer is not None and result["gold_answer"] is not None:
+                        # Normalize answers by removing trailing punctuation and normalizing whitespace
+                        normalized_pred = pred_answer.strip().rstrip('.,:;!?').strip()
+                        normalized_gold = result["gold_answer"].strip().rstrip('.,:;!?').strip()
+                        
+                        # Check for exact match after normalization
+                        is_correct = normalized_pred == normalized_gold
+                        
+                        # If not an exact match, check if any word in the predicted answer matches the gold answer
+                        if not is_correct and ' ' in normalized_pred:
+                            # Split the predicted answer into words
+                            pred_words = normalized_pred.split()
+                            # Check if any word in the predicted answer matches the gold answer
+                            is_correct = normalized_gold in pred_words
+                    else:
+                        is_correct = pred_answer == result["gold_answer"]
+                    
                     if is_correct:
                         correct += 1
                     
@@ -158,13 +183,13 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     # Include all SC paths in results
                     results.append({
                         "sample_index": result["sample_idx"],
-                        "question": result["question"],
                         "prompt": result["prompt"],
                         "generated_text": result.get("generated_text", ""),
                         "pred_answer": pred_answer,
                         "gold_answer": result["gold_answer"],
                         "is_correct": is_correct,
-                        "sc_paths": [{"answer": ans, "text": txt} for ans, txt in zip(result["sc_answers"], result["sc_texts"])]
+                        "sc_paths": [{"answer": ans, "text": txt} for ans, txt in zip(result["sc_answers"], result["sc_texts"])],
+                        "passage": result.get("passage", "")
                     })
                     
                     if args.debug:
@@ -172,6 +197,8 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                         print(f"Sample {result['sample_idx']} - Predicted: {pred_answer}, Gold: {result['gold_answer']}, "
                               f"Correct: {is_correct}, Confidence: {confidence:.2f}, "
                               f"SC Paths: {len(result['sc_answers'])}/{SELF_CONSISTENCY_PATHS}")
+                        if args.dataset == "drop":
+                            print(f"Passage: {result.get('passage', '')}")
                 else:
                     total += 1
                     if args.debug:
@@ -207,6 +234,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
             batch_gold_answers = []
             batch_examples = []
             batch_prompts = []
+            batch_passages = []
             
             for idx in batch_indices:
                 try:
@@ -227,18 +255,21 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
 
                     if args.dataset == "gsm8k":
                         gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
+                    elif args.dataset == "drop":
+                        gold_answer = raw_gold_answer.strip()
                     else:
                         gold_answer = extract_numeric_answer(raw_gold_answer)
                         
                     batch_gold_answers.append(gold_answer)
 
-                    passage = None
                     if args.dataset == "drop" and "passage" in example:
                         passage = example["passage"]
-
+                    else:
+                        passage = ""
                     options = None
                     formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                     batch_prompts.append(formatted_prompt)
+                    batch_passages.append(passage)
                 except Exception as e:
                     if args.debug:
                         print(f"Error processing example at index {idx}: {str(e)}")
@@ -284,21 +315,43 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
                         model_response = generated_text[len(prompt):].strip()
                         
-                        pred_answer = extract_numeric_answer(model_response)
-                        pred_answer_str = str(int(pred_answer)) if pred_answer is not None else None
+                        if args.dataset == "drop":
+                            pred_answer = extract_drop_answer(model_response)
+                            pred_answer_str = pred_answer if pred_answer is not None else None
+                        else:
+                            pred_answer = extract_numeric_answer(model_response)
+                            pred_answer_str = str(int(pred_answer)) if pred_answer is not None else None
                         
-                        is_correct = pred_answer_str == gold_answer
+                        # For DROP dataset, normalize answers before comparison
+                        if args.dataset == "drop" and pred_answer_str is not None and gold_answer is not None:
+                            # Normalize answers by removing trailing punctuation and normalizing whitespace
+                            normalized_pred = pred_answer_str.strip().rstrip('.,:;!?').strip()
+                            normalized_gold = gold_answer.strip().rstrip('.,:;!?').strip()
+                            
+                            # Check for exact match after normalization
+                            is_correct = normalized_pred == normalized_gold
+                            
+                            # If not an exact match, check if any word in the predicted answer matches the gold answer
+                            if not is_correct and ' ' in normalized_pred:
+                                # Split the predicted answer into words
+                                pred_words = normalized_pred.split()
+                                # Check if any word in the predicted answer matches the gold answer
+                                is_correct = normalized_gold in pred_words
+                        else:
+                            is_correct = pred_answer_str == gold_answer
+                        
                         if is_correct:
                             correct += 1
                         
+                        passage = batch_passages[idx] if args.dataset == "drop" else ""
                         result = {
                             "sample_index": i + idx,
-                            "question": question,
                             "prompt": prompt,
                             "generated_text": model_response,
                             "pred_answer": pred_answer_str,
                             "gold_answer": gold_answer,
-                            "is_correct": is_correct
+                            "is_correct": is_correct,
+                            "passage": passage
                         }
                         
                         results.append(result)
@@ -306,6 +359,8 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         
                         if args.debug:
                             print(f"Example {i + idx}:")
+                            if args.dataset == "drop":
+                                print(f"Passage: {passage}")
                             print(f"Question: {question}")
                             print(f"Response: {model_response[:100]}...")
                             print(f"Extracted Answer: {pred_answer_str}")
