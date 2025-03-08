@@ -1,5 +1,5 @@
-Final Accuracy of chain on gsm8k (self-consistency: True): 7.30%
-Total Correct Answers: 73/1000 Questions
+Final Accuracy of simple on race (self-consistency: True): 43.90%
+Total Correct Answers: 439/1000 Questions
 
 Unextracted Answers: 0 samples
 

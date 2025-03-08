@@ -1,5 +1,5 @@
-Final Accuracy of chain on gsm8k (self-consistency: True): 7.30%
-Total Correct Answers: 73/1000 Questions
+Final Accuracy of role on gsm8k (self-consistency: True): 3.30%
+Total Correct Answers: 33/1000 Questions
 
 Unextracted Answers: 0 samples
 

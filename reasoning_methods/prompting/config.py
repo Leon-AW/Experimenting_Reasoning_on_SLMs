@@ -9,7 +9,7 @@ TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
-SELF_CONSISTENCY_PATHS = 15
+SELF_CONSISTENCY_PATHS = 20
 
 # CISC (Confidence-Informed Self-Consistency) parameters
 CISC_ENABLED = True
@@ -70,41 +70,29 @@ PROMPT_TEMPLATES = {
     # Simple question prompt
     "simple": {
         "numeric": """Problem: {question}\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'.\nAnswer: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\n"""
+        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\n"""
     },
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
     "chain": {
-        "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
-        "multiple_choice": """Question: {question} \n\nOptions:\n{options}
-
-        Let's think step by step: """
-            },
-            # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
-            "role": {
-                "numeric": """From now on, you are an excellent math professor. Your students ask you a question.\nQuestion: {question}\nYou think step by step and conclude your answer with 'The final answer is: <insert your answer here>'.\n""",
-                "multiple_choice": """From now on, you are an excellent math professor. Your students ask you a question.
-
-        Question: {question}
-
-        Options:
-        {options}
-
-        You think step by step and conclude your answer with 'The answer is: <insert your answer here>'.
-        """
+        "numeric": """Problem: {question}\n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'.\n\nLet's think step by step: """,
+        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\nLet's think step by step: """
+    },
+    # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
+    "role": {
+        "numeric": """User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
+Assistant: That's great to hear! As your math teacher, I'll do my best to explain mathematical concepts correctly so that you can understand them easily. Finally I will conclude it with 'The final answer is: <insert your answer here>'. Feel free to ask any math problems or questions you have, and I'll be glad to assist you.
+User: {question}
+Assistant: """,
+        "multiple_choice": """User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
+Assistant: That's great to hear! As your math teacher, I'll do my best to explain mathematical concepts correctly so that you can understand them easily. Feel free to ask any math problems or questions you have, and I'll be glad to assist you.
+User: {question}
+Options:
+{options}
+Assistant: """
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
-        "numeric": """Problem: {question}\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step.\nFinally conclude your answer with 'The final answer is: <insert your answer here>'.\n""",
-        "multiple_choice": """Question: {question}
-
-Options:
-{options}
-
-Let's approach this systematically:
-1. First, let's understand the question
-2. Then, analyze each option carefully
-3. Finally, choose the highest probability answer.
-
-"""
+        "numeric": """Problem: {question}\n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate results (pay attention to calculation and common sense), solve the problem step by step, and then conclude it with 'The final answer is: <insert your answer here>'.""",
+        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\nLet's approach this systematically:\n1. First, let's understand the question\n2. Then, analyze each option carefully\n3. Finally, choose the highest probability answer and conclude with 'The final answer is: <insert your answer here>'."""
     }
 }

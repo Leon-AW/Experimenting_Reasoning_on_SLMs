@@ -148,7 +148,9 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
             # Progress bar for samples within batch
             for sample_idx in tqdm(batch_indices, desc=f"Processing samples in batch {batch_idx+1}/{num_batches}", leave=False):
                 try:
-                    example = dataset[sample_idx]
+                    # Handle wrapped indices for smaller datasets
+                    actual_idx = sample_idx % len(dataset)
+                    example = dataset[actual_idx]
                     question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
                     
                     if args.dataset == "drop":
@@ -175,7 +177,8 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
                     
                     batch_results.append({
-                        "sample_idx": sample_idx,
+                        "sample_idx": sample_idx,  # Keep original index for final results
+                        "actual_idx": actual_idx,  # Store actual dataset index
                         "question": question,
                         "passage": passage if args.dataset == "drop" else "",
                         "prompt": formatted_prompt,
@@ -186,7 +189,7 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     })
                 except Exception as e:
                     if args.debug:
-                        print(f"Error preparing sample {sample_idx}: {e}")
+                        print(f"Error preparing sample {sample_idx} (actual index {sample_idx % len(dataset)}): {e}")
                     continue
             
             # Progress bar for SC paths
@@ -397,20 +400,29 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
     total = 0
     results = []
 
+    # Get the sample indices from the process_dataset_batch function
+    sample_indices = list(range(0, max_samples))
+    if hasattr(args, 'current_sample_indices') and args.current_sample_indices:
+        sample_indices = args.current_sample_indices[:max_samples]
+
     # Process in batches with progress bar
     with tqdm(total=max_samples, desc="Processing samples") as pbar:
         for i in range(0, max_samples, batch_size):
-            batch_indices = list(range(i, min(i + batch_size, max_samples)))
+            batch_indices = sample_indices[i:min(i + batch_size, max_samples)]
             batch_questions = []
             batch_gold_answers = []
             batch_examples = []
             batch_prompts = []
             batch_passages = []
+            batch_real_indices = []  # To keep track of the original dataset indices
             
-            for idx in batch_indices:
+            for sample_idx in batch_indices:
                 try:
-                    example = dataset[idx]
+                    # Get the actual index in the dataset (which might be wrapped around for smaller datasets)
+                    actual_idx = sample_idx % len(dataset)
+                    example = dataset[actual_idx]
                     batch_examples.append(example)
+                    batch_real_indices.append(sample_idx)
                     
                     question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
                     batch_questions.append(question)
@@ -443,7 +455,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                     batch_passages.append(passage)
                 except Exception as e:
                     if args.debug:
-                        print(f"Error processing example at index {idx}: {str(e)}")
+                        print(f"Error processing example at index {sample_idx}: {str(e)}")
                     total += 1
                     pbar.update(1)
                     continue
@@ -477,8 +489,8 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         **generation_kwargs
                     )
                     
-                    for idx, (prompt, gold_answer, question) in enumerate(zip(batch_prompts, batch_gold_answers, batch_questions)):
-                        output_idx = idx * NUM_RETURN_SEQUENCES
+                    for batch_idx, (prompt, gold_answer, question, real_idx) in enumerate(zip(batch_prompts, batch_gold_answers, batch_questions, batch_real_indices)):
+                        output_idx = batch_idx * NUM_RETURN_SEQUENCES
                         if output_idx >= len(outputs):
                             continue
                             
@@ -514,10 +526,10 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         if is_correct:
                             correct += 1
                         
-                        passage = batch_passages[idx] if args.dataset == "drop" else ""
+                        passage = batch_passages[batch_idx] if args.dataset == "drop" else ""
                         result = {
-                            "sample_index": i + idx,
-                            "question": batch_questions[idx],
+                            "sample_index": real_idx,
+                            "question": batch_questions[batch_idx],
                             "passage": passage,
                             "prompt": prompt,
                             "generated_text": model_response,
@@ -530,7 +542,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         total += 1
                         
                         if args.debug:
-                            print(f"Example {i + idx}:")
+                            print(f"Example {real_idx}:")
                             if args.dataset == "drop":
                                 print(f"Passage: {passage}")
                             print(f"Question: {question}")

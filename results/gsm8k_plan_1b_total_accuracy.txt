@@ -1,5 +1,7 @@
-Final Accuracy of plan on gsm8k (self-consistency: False): 3.30%
-Total Correct Answers: 33/1000 Questions
+Final Accuracy of plan on gsm8k: 3.90%
+Total Correct Answers: 39/1000 Questions
+
+Processed Samples: 1000 (Minimum 1000 samples guaranteed)
 
 Unextracted Answers: 0 samples
 

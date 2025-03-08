@@ -22,8 +22,13 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
         sample_indices = all_indices[:1000]  # Exactly 1000 samples.
         max_samples = 1000
     else:
-        max_samples = min(1000, len(dataset))
-        sample_indices = list(range(max_samples))
+        # Ensure we always process at least 1000 samples by cycling through the dataset if needed
+        dataset_size = len(dataset)
+        all_indices = []
+        while len(all_indices) < 1000:
+            all_indices.extend(range(dataset_size))
+        sample_indices = all_indices[:1000]  # Exactly 1000 samples.
+        max_samples = 1000
 
     # Define which datasets are numeric vs. multiple-choice.
     multiple_choice_datasets = ["race", "arc", "mmlu", "agieval"]
@@ -33,6 +38,9 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
 
     # Store batch_size in args for access in processor functions
     args.batch_size = batch_size
+    
+    # Store sample indices to be used by processor functions
+    args.current_sample_indices = sample_indices
 
     if args.dataset in multiple_choice_datasets:
         # Multiple Choice Processing
@@ -57,6 +65,5 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
             )
         else:
             correct, total, results = numeric_processor.process_numeric_batch(
-                pipe, dataset, template_name, args, batch_size, max_samples
-            )
+                pipe, dataset, template_name, args, batch_size, max_samples)
         return correct, total, results
