@@ -69,7 +69,7 @@ DATASET_CONFIGS = {
 PROMPT_TEMPLATES = {
     # Simple question prompt
     "simple": {
-        "numeric": """Problem: {question} \n\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+        "numeric": """Problem: {question}\nSolve the problem, then conclude it with 'The final answer is: <insert your answer here>'.\nAnswer: """,
         "multiple_choice": """Question: {question} \n\nOptions:\n{options}\n\n"""
     },
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
@@ -77,25 +77,24 @@ PROMPT_TEMPLATES = {
         "numeric": """Problem: {question} \n\nSolve the problem step-by-step, then conclude it with 'The final answer is: <insert your answer here>'. \n\nLet's think step by step: """,
         "multiple_choice": """Question: {question} \n\nOptions:\n{options}
 
-        Let's solve this step-by-step: """
+        Let's think step by step: """
             },
             # Role-Setting Prompt: https://aclanthology.org/2024.naacl-long.228/
             "role": {
-                "numeric": """From now on, you are an excellent math teacher. One of your students wants to ask you a question. \nYou explain it and conclude your answer with 'The final answer is: <insert your answer here>'.
-        \n\nQuestion: {question}\n\nCorrect Answer: """,
-                "multiple_choice": """From now on, you are an excellen math teacher. One of your students wants to ask you a question. 
+                "numeric": """From now on, you are an excellent math professor. Your students ask you a question.\nQuestion: {question}\nYou think step by step and conclude your answer with 'The final answer is: <insert your answer here>'.\n""",
+                "multiple_choice": """From now on, you are an excellent math professor. Your students ask you a question.
 
         Question: {question}
 
         Options:
         {options}
 
-        Correct Answer: """
+        You think step by step and conclude your answer with 'The answer is: <insert your answer here>'.
+        """
     },
     # Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models: https://arxiv.org/abs/2305.04091
     "plan": {
-        "numeric": """Problem: {question} \n\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step, and show the answer. 
-\n\nFinally conclude your answer with 'The final answer is: <insert your answer here>'. \n\nAnswer: """,
+        "numeric": """Problem: {question}\nLet's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate variables, solve the problem step by step.\nFinally conclude your answer with 'The final answer is: <insert your answer here>'.\n""",
         "multiple_choice": """Question: {question}
 
 Options:
