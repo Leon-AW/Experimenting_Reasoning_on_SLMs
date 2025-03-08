@@ -57,7 +57,6 @@ def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batc
         with open(txt_file_path, mode='w') as file:
             file.write(f"Final Accuracy of {template_name} on {dataset_key} (self-consistency: {current_args.self_consistency}): {final_accuracy:.2%}\n")
             file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
-            file.write(f"\nProcessed Samples: {total} (Minimum 1000 samples guaranteed)\n")
             file.write(f"\nUnextracted Answers: {total - len(results)} samples\n")
             if total > len(results):
                 file.write(f"Number of unextracted answers: {total - len(results)}\n")
@@ -336,7 +335,6 @@ def main():
                 with open(txt_file_path, mode='w') as file:
                     file.write(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}\n")
                     file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
-                    file.write(f"\nProcessed Samples: {total} (Minimum 1000 samples guaranteed)\n")
                     file.write(f"\nUnextracted Answers: {total - len(results)} samples\n")
                     if total > len(results):
                         file.write(f"Number of unextracted answers: {total - len(results)}\n")

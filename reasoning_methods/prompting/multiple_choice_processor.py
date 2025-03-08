@@ -1,6 +1,6 @@
 from tqdm import tqdm
 from collections import Counter
-from .prompts import format_prompt
+from .prompt_helper import format_prompt
 from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS, TOP_P, TOP_K, SEED, CISC_ENABLED, CISC_TEMPERATURE, CISC_METHOD, CONFIDENCE_PROMPT_BINARY, CONFIDENCE_PROMPT_SCALE
 import torch
 import numpy as np
