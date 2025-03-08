@@ -176,6 +176,7 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     
                     batch_results.append({
                         "sample_idx": sample_idx,
+                        "question": question,
                         "passage": passage if args.dataset == "drop" else "",
                         "prompt": formatted_prompt,
                         "gold_answer": gold_answer,
@@ -343,6 +344,7 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     # Include all SC paths in results
                     results.append({
                         "sample_index": result["sample_idx"],
+                        "question": result["question"],
                         "passage": result["passage"],
                         "prompt": result["prompt"],
                         "generated_text": result.get("generated_text", ""),
@@ -357,7 +359,10 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                                 result["sc_texts"], 
                                 result["sc_confidences"] if CISC_ENABLED and result["sc_confidences"] else [1.0] * len(result["sc_answers"])
                             )
-                        ]
+                        ],
+                        "sc_answers": result["sc_answers"],
+                        "sc_texts": result["sc_texts"],
+                        "sc_confidences": result["sc_confidences"] if CISC_ENABLED and result["sc_confidences"] else [1.0] * len(result["sc_answers"])
                     })
                     
                     if args.debug:
@@ -512,6 +517,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         passage = batch_passages[idx] if args.dataset == "drop" else ""
                         result = {
                             "sample_index": i + idx,
+                            "question": batch_questions[idx],
                             "passage": passage,
                             "prompt": prompt,
                             "generated_text": model_response,

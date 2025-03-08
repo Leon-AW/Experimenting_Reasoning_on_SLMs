@@ -1,5 +1,5 @@
-Final Accuracy of simple on race (self-consistency: False): 47.20%
-Total Correct Answers: 472/1000 Questions
+Final Accuracy of chain on gsm8k: 7.30%
+Total Correct Answers: 73/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -15,6 +15,7 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: False
+Self Consistency: True
+Self Consistency Paths: 15
 Device: cuda
 Random Seed: 42

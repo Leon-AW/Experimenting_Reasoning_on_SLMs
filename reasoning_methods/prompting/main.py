@@ -42,8 +42,14 @@ def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batc
         os.makedirs('results', exist_ok=True)
         sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if current_args.self_consistency else ""
         csv_file_path = os.path.join('results', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_results.csv')
+        
+        # Define fieldnames based on whether self-consistency is enabled
+        fieldnames = ["sample_index", "question", "passage", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
+        if current_args.self_consistency:
+            fieldnames.extend(["confidence", "sc_paths"])
+        
         with open(csv_file_path, mode='w', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"])
+            writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction='ignore')
             writer.writeheader()
             writer.writerows(results)
 
@@ -305,9 +311,12 @@ def main():
                 csv_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
                 with open(csv_file_path, mode='w', newline='') as file:
                     # Add sc_paths to fieldnames if self-consistency is enabled
-                    fieldnames = ["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
+                    fieldnames = ["sample_index", "question", "passage", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
                     if args.self_consistency:
                         fieldnames.append("sc_paths")
+                        fieldnames.append("sc_confidences")
+                        fieldnames.append("sc_answers")
+                        fieldnames.append("sc_texts")
                     
                     writer = csv.DictWriter(file, fieldnames=fieldnames)
                     writer.writeheader()
@@ -317,6 +326,9 @@ def main():
                         row = {k: v for k, v in result.items() if k in fieldnames}
                         if args.self_consistency and "sc_paths" in result:
                             row["sc_paths"] = str(result["sc_paths"])
+                            row["sc_confidences"] = str(result["sc_confidences"])
+                            row["sc_answers"] = str(result["sc_answers"])
+                            row["sc_texts"] = str(result["sc_texts"])
                         writer.writerow(row)
 
                 txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_total_accuracy.txt')
