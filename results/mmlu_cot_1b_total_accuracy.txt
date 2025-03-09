@@ -1,5 +1,5 @@
-Final Accuracy of simple on mmlu (self-consistency: False): 22.30%
-Total Correct Answers: 223/1000 Questions
+Final Accuracy of cot on mmlu (self-consistency: False): 23.30%
+Total Correct Answers: 233/1000 Questions
 
 Unextracted Answers: 0 samples
 

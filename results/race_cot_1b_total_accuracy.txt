@@ -1,5 +1,5 @@
-Final Accuracy of cot on race: 31.40%
-Total Correct Answers: 314/1000 Questions
+Final Accuracy of cot on race: 37.60%
+Total Correct Answers: 376/1000 Questions
 
 Unextracted Answers: 0 samples
 

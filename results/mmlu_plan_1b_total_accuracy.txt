@@ -1,5 +1,5 @@
-Final Accuracy of simple on mmlu (self-consistency: False): 22.30%
-Total Correct Answers: 223/1000 Questions
+Final Accuracy of plan on mmlu (self-consistency: False): 22.50%
+Total Correct Answers: 225/1000 Questions
 
 Unextracted Answers: 0 samples
 

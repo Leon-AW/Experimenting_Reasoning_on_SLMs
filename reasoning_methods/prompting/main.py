@@ -39,12 +39,15 @@ def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batc
         print(f"Total Correct Answers: {correct}/{total} Questions")
         
         # Save results and metrics
-        os.makedirs('results', exist_ok=True)
+        os.makedirs('debug_csvs', exist_ok=True)
         sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if current_args.self_consistency else ""
-        csv_file_path = os.path.join('results', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_results.csv')
+        csv_file_path = os.path.join('debug_csvs', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_results.csv')
         
         # Define fieldnames based on whether self-consistency is enabled
-        fieldnames = ["sample_index", "question", "passage", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
+        fieldnames = ["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
+        if "passage" in results[0] and results[0]["passage"]:
+            fieldnames.insert(2, "passage")  # Add passage field if it exists in results
+        
         if current_args.self_consistency:
             fieldnames.extend(["confidence", "sc_paths"])
         
@@ -129,8 +132,6 @@ def main():
     parser.add_argument('--template', type=str, default=None,
                         choices=list(PROMPT_TEMPLATES.keys()),
                         help='Specific prompt template to evaluate (default: all templates)')
-    parser.add_argument('--optimize', action='store_true',
-                        help='Enable additional optimizations for inference speed')
     args = parser.parse_args()
 
     # Set environment variable for model size to optimize batch size in dataset_utils
@@ -306,12 +307,12 @@ def main():
                 print(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}")
                 print(f"Total Correct Answers: {correct}/{total} Questions")
                 
-                os.makedirs('results', exist_ok=True)
+                os.makedirs('debug_csvs', exist_ok=True)
                 sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if args.self_consistency else ""
-                csv_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
+                csv_file_path = os.path.join('debug_csvs', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
                 with open(csv_file_path, mode='w', newline='') as file:
                     # Add sc_paths to fieldnames if self-consistency is enabled
-                    fieldnames = ["sample_index", "question", "passage", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
+                    fieldnames = ["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
                     if args.self_consistency:
                         fieldnames.append("sc_paths")
                         fieldnames.append("confidence")  # Changed from sc_confidences to confidence

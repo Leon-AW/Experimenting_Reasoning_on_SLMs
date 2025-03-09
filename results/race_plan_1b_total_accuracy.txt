@@ -1,5 +1,5 @@
-Final Accuracy of plan on race: 28.20%
-Total Correct Answers: 282/1000 Questions
+Final Accuracy of plan on race: 36.10%
+Total Correct Answers: 361/1000 Questions
 
 Unextracted Answers: 0 samples
 

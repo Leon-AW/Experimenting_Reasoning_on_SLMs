@@ -11,36 +11,29 @@ DO_SAMPLE = True
 NUM_RETURN_SEQUENCES = 1
 SELF_CONSISTENCY_PATHS = 20
 
-# CISC (Confidence-Informed Self-Consistency) parameters
-CISC_ENABLED = True
-CISC_TEMPERATURE = 0.1  # Temperature for confidence normalization
-CISC_METHOD = "p_true"  # Options: "p_true", "verbal_binary", "verbal_scale", "response_probability"
-CONFIDENCE_PROMPT_BINARY = "Now I will rate my confidence in the proposed answer as either 0 or 1.\nProposed confidence: ("
-CONFIDENCE_PROMPT_SCALE = "Now I will rate my confidence in the proposed answer on a scale of 0-100.\nProposed confidence: ("
-
 # Dataset configurations
 DATASET_CONFIGS = {
-    # "gsm8k": {
-    #     "name": "gsm8k",
-    #     "split": "main",
-    #     "subset": "test",
-    #     "question_key": "question",
-    #     "answer_key": "answer"
-    # },
-    # "race": {
-    #     "name": "race",
-    #     "split": "high",
-    #     "subset": "test",
-    #     "question_key": "question",
-    #     "answer_key": "answer"
-    # },
-    "arc": {
-        "name": "ai2_arc",
-        "split": "ARC-Challenge",
+    "gsm8k": {
+        "name": "gsm8k",
+        "split": "main",
         "subset": "test",
         "question_key": "question",
-        "answer_key": "answerKey"
+        "answer_key": "answer"
     },
+    "race": {
+        "name": "race",
+        "split": "high",
+        "subset": "test",
+        "question_key": "question",
+        "answer_key": "answer"
+    },
+    # "arc": {
+    #     "name": "ai2_arc",
+    #     "split": "ARC-Challenge",
+    #     "subset": "test",
+    #     "question_key": "question",
+    #     "answer_key": "answerKey"
+    # },
     "mmlu": {
         "name": "cais/mmlu",
         "split": "high_school_mathematics",
