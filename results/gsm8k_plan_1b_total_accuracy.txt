@@ -1,7 +1,5 @@
-Final Accuracy of plan on gsm8k: 3.90%
-Total Correct Answers: 39/1000 Questions
-
-Processed Samples: 1000 (Minimum 1000 samples guaranteed)
+Final Accuracy of plan on gsm8k (self-consistency: False): 3.20%
+Total Correct Answers: 32/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -12,7 +10,7 @@ Number of GPUs: 3
 Max Memory per GPU: {0: 75000000000, 1: 75000000000, 2: 75000000000, 'cpu': 8000000000}
 Min New Tokens: 1
 Max New Tokens: 256
-Temperature: 0.7
+Temperature: 0.5
 Top P: 0.9
 Top K: 0
 Do Sample: True

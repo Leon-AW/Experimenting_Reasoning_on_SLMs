@@ -1,5 +1,5 @@
-Final Accuracy of simple on gsm8k (self-consistency: False): 5.50%
-Total Correct Answers: 55/1000 Questions
+Final Accuracy of plan on arc (self-consistency: False): 24.10%
+Total Correct Answers: 241/1000 Questions
 
 Unextracted Answers: 0 samples
 

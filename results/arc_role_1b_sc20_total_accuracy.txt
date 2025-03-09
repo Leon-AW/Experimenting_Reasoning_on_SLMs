@@ -1,5 +1,5 @@
-Final Accuracy of simple on gsm8k (self-consistency: False): 5.50%
-Total Correct Answers: 55/1000 Questions
+Final Accuracy of role on arc (self-consistency: True): 25.70%
+Total Correct Answers: 257/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -15,6 +15,7 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: False
+Self Consistency: True
+Self Consistency Paths: 20
 Device: cuda
 Random Seed: 42

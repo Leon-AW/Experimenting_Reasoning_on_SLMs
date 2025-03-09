@@ -314,9 +314,7 @@ def main():
                     fieldnames = ["sample_index", "question", "passage", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
                     if args.self_consistency:
                         fieldnames.append("sc_paths")
-                        fieldnames.append("sc_confidences")
-                        fieldnames.append("sc_answers")
-                        fieldnames.append("sc_texts")
+                        fieldnames.append("confidence")  # Changed from sc_confidences to confidence
                     
                     writer = csv.DictWriter(file, fieldnames=fieldnames)
                     writer.writeheader()
@@ -325,10 +323,13 @@ def main():
                     for result in results:
                         row = {k: v for k, v in result.items() if k in fieldnames}
                         if args.self_consistency and "sc_paths" in result:
+                            # Extract confidence as the weighted average if CISC is enabled, otherwise as frequency
+                            if "confidence" in result:
+                                row["confidence"] = result["confidence"]
+                            
+                            # Convert sc_paths to string representation
                             row["sc_paths"] = str(result["sc_paths"])
-                            row["sc_confidences"] = str(result["sc_confidences"])
-                            row["sc_answers"] = str(result["sc_answers"])
-                            row["sc_texts"] = str(result["sc_texts"])
+                        
                         writer.writerow(row)
 
                 txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_total_accuracy.txt')

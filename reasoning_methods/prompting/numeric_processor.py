@@ -209,7 +209,7 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                 
                 generation_kwargs = {
                     "min_new_tokens": MIN_NEW_TOKENS,
-                    "max_new_tokens": MAX_NEW_TOKENS,
+                    "max_new_tokens": MAX_NEW_TOKENS if template_name != "direct" else 5,
                     "temperature": TEMPERATURE,
                     "top_p": TOP_P,
                     "top_k": TOP_K,
@@ -381,10 +381,11 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
     
     return correct, total, results
 
-def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_samples):
+def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_samples, sample_indices=None):
     """
     Process numeric datasets (e.g., GSM8K, DROP) using normal generation.
     Enhanced for better performance with efficient batching.
+    If sample_indices is provided, it will be used instead of generating sequential indices from 0 to max_samples.
     """
     # Set seeds for reproducibility
     random.seed(SEED)
@@ -397,21 +398,26 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
     total = 0
     results = []
 
+    if sample_indices is None:
+        sample_indices = list(range(max_samples))
+    else:
+        max_samples = len(sample_indices)
+
     # Process in batches with progress bar
-    with tqdm(total=max_samples, desc="Processing samples") as pbar:
-        for i in range(0, max_samples, batch_size):
-            batch_indices = list(range(i, min(i + batch_size, max_samples)))
+    with tqdm(total=len(sample_indices), desc="Processing samples") as pbar:
+        for i in range(0, len(sample_indices), batch_size):
+            current_batch = sample_indices[i:i+batch_size]
             batch_questions = []
             batch_gold_answers = []
             batch_examples = []
             batch_prompts = []
             batch_passages = []
             
-            for idx in batch_indices:
+            for idx in current_batch:
                 try:
                     example = dataset[idx]
                     batch_examples.append(example)
-                    
+
                     question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
                     batch_questions.append(question)
 
@@ -447,7 +453,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                     total += 1
                     pbar.update(1)
                     continue
-
+            
             if not batch_prompts:
                 continue
                 
@@ -461,7 +467,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
 
             generation_kwargs = {
                 "min_new_tokens": MIN_NEW_TOKENS,
-                "max_new_tokens": MAX_NEW_TOKENS,
+                "max_new_tokens": MAX_NEW_TOKENS if template_name != "direct" else 5,
                 "temperature": TEMPERATURE,
                 "top_p": TOP_P,
                 "top_k": TOP_K,
@@ -545,7 +551,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
             except Exception as e:
                 if args.debug:
                     print(f"Error processing batch {i//batch_size}: {str(e)}")
-                pbar.update(len(batch_indices))
+                pbar.update(len(current_batch))
             
             accuracy = correct / total if total > 0 else 0
             pbar.set_postfix({"Accuracy": f"{accuracy:.2%}", "Correct": f"{correct}/{total}"})

@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from collections import Counter
 from .prompt_helper import format_prompt
+from reasoning_methods.prompting.answer_extraction import extract_multiple_choice_answer
 from .config import DATASET_CONFIGS, TEMPERATURE, SELF_CONSISTENCY_PATHS, MAX_NEW_TOKENS, MIN_NEW_TOKENS, TOP_P, TOP_K, SEED, CISC_ENABLED, CISC_TEMPERATURE, CISC_METHOD, CONFIDENCE_PROMPT_BINARY, CONFIDENCE_PROMPT_SCALE
 import torch
 import numpy as np
@@ -496,6 +497,8 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                             sample_data["sc_answers"].append(pred)
                             # Add default confidence for simple template (no generated text)
                             sample_data["sc_confidences"].append(0.5)
+                            # Add empty text for simple template since there's no generated text
+                            sample_data["sc_texts"].append("")
             else:
                 # For CoT templates, we process paths in batches
                 for path_batch_idx in range(0, SELF_CONSISTENCY_PATHS, effective_paths_per_batch):

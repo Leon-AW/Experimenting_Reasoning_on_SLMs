@@ -3,60 +3,69 @@ from reasoning_methods.prompting import numeric_processor
 from .config import DATASET_CONFIGS
 
 def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
-    """Dispatcher function to process dataset batches, routing processing depending on the dataset type 
-    and self-consistency flag.
-    
-    For multiple-choice benchmarks (e.g. RACE, ARC, MMLU, AGIEVAL) no freeform text is generated. Instead, log likelihood is used.
+    """
+    Dispatcher function to process dataset batches, routing processing depending on the dataset type 
+    and self-consistency flag, ensuring that at least 1000 successful samples are processed.
+    If errors occur in processing some samples, additional samples are processed until 1000 valid results are obtained.
+    For multiple-choice benchmarks (e.g. RACE, ARC, MMLU, AGIEVAL) no freeform text is generated.
     For numeric tasks (GSM8K, DROP), text generation and answer extraction are performed.
     """
-    correct = 0
-    total = 0
+    correct_total = 0
+    total_processed = 0
     results = []
-
-    # Determine sample indices.
-    if args.dataset == "mmlu":
-        dataset_size = len(dataset)
-        all_indices = []
-        while len(all_indices) < 1000:
-            all_indices.extend(range(dataset_size))
-        sample_indices = all_indices[:1000]  # Exactly 1000 samples.
-        max_samples = 1000
-    else:
-        max_samples = min(1000, len(dataset))
-        sample_indices = list(range(max_samples))
+    dataset_size = len(dataset)
+    pointer = 0
 
     # Define which datasets are numeric vs. multiple-choice.
     multiple_choice_datasets = ["race", "arc", "mmlu", "agieval"]
 
-    # A mapping for answer normalization.
-    mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
-
     # Store batch_size in args for access in processor functions
     args.batch_size = batch_size
 
-    if args.dataset in multiple_choice_datasets:
-        # Multiple Choice Processing
-        if args.self_consistency:
-            correct, total, results = multiple_choice_processor.process_mc_self_consistency(
-                pipe, dataset, template_name, args, sample_indices, mapping
-            )
-        else:
-            correct, total, results = multiple_choice_processor.process_mc_regular(
-                pipe, dataset, template_name, args, sample_indices, mapping
-            )
-        if args.debug:
-            overall_acc = correct / total if total else 0
-            print(f"\nOverall accuracy (Multiple Choice): {overall_acc:.2%}")
-        return correct, total, results
+    while len(results) < 1000:
+        target = 1000 - len(results)  # remaining samples needed
+        current_batch_size = min(batch_size, target)
+        batch_indices = []
+        for _ in range(current_batch_size):
+            if args.dataset == "mmlu":
+                # For mmlu, cycle through dataset if needed.
+                batch_indices.append(pointer % dataset_size)
+            else:
+                # For other datasets, ensure pointer is within dataset range.
+                if pointer < dataset_size:
+                    batch_indices.append(pointer)
+                else:
+                    # In the unlikely event we run out, cycle through the dataset
+                    print(f"Pointer {pointer} is out of range for dataset size {dataset_size}")
+                    batch_indices.append(pointer % dataset_size)
+            pointer += 1
 
-    else:
-        # Numeric Processing
-        if args.self_consistency:
-            correct, total, results = numeric_processor.process_numeric_self_consistency(
-                pipe, dataset, template_name, args, sample_indices
-            )
+        if args.dataset in multiple_choice_datasets:
+            mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+            if args.self_consistency:
+                corr, tot, batch_results = multiple_choice_processor.process_mc_self_consistency(
+                    pipe, dataset, template_name, args, batch_indices, mapping
+                )
+            else:
+                corr, tot, batch_results = multiple_choice_processor.process_mc_regular(
+                    pipe, dataset, template_name, args, batch_indices, mapping
+                )
+            if args.debug:
+                overall_acc = corr / tot if tot else 0
+                print(f"\nBatch accuracy (Multiple Choice): {overall_acc:.2%}")
         else:
-            correct, total, results = numeric_processor.process_numeric_batch(
-                pipe, dataset, template_name, args, batch_size, max_samples
-            )
-        return correct, total, results
+            if args.self_consistency:
+                corr, tot, batch_results = numeric_processor.process_numeric_self_consistency(
+                    pipe, dataset, template_name, args, batch_indices
+                )
+            else:
+                corr, tot, batch_results = numeric_processor.process_numeric_batch(
+                    pipe, dataset, template_name, args, batch_size, len(batch_indices), sample_indices=batch_indices
+                )
+        correct_total += corr
+        total_processed += tot
+        results.extend(batch_results)
+    
+    # Trim results to exactly 1000 if we got more.
+    results = results[:1000]
+    return correct_total, total_processed, results
