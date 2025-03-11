@@ -1,5 +1,5 @@
-Final Accuracy of cot on arc (self-consistency: True): 34.80%
-Total Correct Answers: 348/1000 Questions
+Final Accuracy of plan on race (self-consistency: True): 37.00%
+Total Correct Answers: 370/1000 Questions
 
 Unextracted Answers: 0 samples
 

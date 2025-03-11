@@ -7,8 +7,8 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
     Dispatcher function to process dataset batches, routing processing depending on the dataset type 
     and self-consistency flag, ensuring that at least 1000 successful samples are processed.
     If errors occur in processing some samples, additional samples are processed until 1000 valid results are obtained.
-    For multiple-choice benchmarks (e.g. RACE, ARC, MMLU, AGIEVAL) no freeform text is generated.
-    For numeric tasks (GSM8K, DROP), text generation and answer extraction are performed.
+    For multiple-choice benchmarks (e.g. RACE, ARC, MMLU) no freeform text is generated.
+    For numeric tasks (GSM8K, DROP, MATH), text generation and answer extraction are performed.
     """
     correct_total = 0
     total_processed = 0

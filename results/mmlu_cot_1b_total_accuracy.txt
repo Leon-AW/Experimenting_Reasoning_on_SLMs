@@ -1,11 +1,11 @@
-Final Accuracy of cot on mmlu (self-consistency: False): 23.30%
-Total Correct Answers: 233/1000 Questions
+Final Accuracy of cot on mmlu (self-consistency: False): 37.20%
+Total Correct Answers: 372/1000 Questions
 
 Unextracted Answers: 0 samples
 
 Hyperparameters:
 Model: meta-llama/Llama-3.2-1B
-Batch Size: 408
+Batch Size: 327
 Number of GPUs: 3
 Max Memory per GPU: {0: 75000000000, 1: 75000000000, 2: 75000000000, 'cpu': 8000000000}
 Min New Tokens: 1

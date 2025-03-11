@@ -62,9 +62,7 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     else:
                         raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-                    if args.dataset == "gsm8k":
-                        gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
-                    elif args.dataset == "drop":
+                    if args.dataset == "drop":
                         gold_answer = raw_gold_answer.strip()
                     else:
                         gold_answer = extract_numeric_answer(raw_gold_answer)
@@ -276,9 +274,7 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                     else:
                         raw_gold_answer = str(example[DATASET_CONFIGS[args.dataset]["answer_key"]]).strip()
 
-                    if args.dataset == "gsm8k":
-                        gold_answer = extract_gold_gsm8k_answer(raw_gold_answer)
-                    elif args.dataset == "drop":
+                    if args.dataset == "drop":
                         gold_answer = raw_gold_answer.strip()
                     else:
                         gold_answer = extract_numeric_answer(raw_gold_answer)

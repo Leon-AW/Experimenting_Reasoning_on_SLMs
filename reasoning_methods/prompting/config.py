@@ -27,13 +27,13 @@ DATASET_CONFIGS = {
         "question_key": "question",
         "answer_key": "answer"
     },
-    # "arc": {
-    #     "name": "ai2_arc",
-    #     "split": "ARC-Challenge",
-    #     "subset": "test",
-    #     "question_key": "question",
-    #     "answer_key": "answerKey"
-    # },
+    "arc": {
+        "name": "ai2_arc",
+        "split": "ARC-Challenge",
+        "subset": "test",
+        "question_key": "question",
+        "answer_key": "answerKey"
+    },
     "mmlu": {
         "name": "cais/mmlu",
         "split": "high_school_mathematics",
@@ -49,13 +49,13 @@ DATASET_CONFIGS = {
         "question_key": "question",
         "answer_key": "answers_spans"
     },
-    "agieval": {
-        "name": "cais/agieval",
-        "split": "test",
-        "subset": None,
-        "question_key": "question",
-        "answer_key": "answer"
-    },
+    "gsm8k_2": {
+    "name": "gsm8k",
+    "split": "main",
+    "subset": "train",
+    "question_key": "question",
+    "answer_key": "answer"
+    }
 }
 
 # Prompt templates

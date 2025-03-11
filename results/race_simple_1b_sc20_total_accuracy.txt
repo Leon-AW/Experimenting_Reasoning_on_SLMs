@@ -1,11 +1,11 @@
-Final Accuracy of simple on race: 44.20%
-Total Correct Answers: 442/1000 Questions
+Final Accuracy of simple on race (self-consistency: True): 42.40%
+Total Correct Answers: 424/1000 Questions
 
 Unextracted Answers: 0 samples
 
 Hyperparameters:
 Model: meta-llama/Llama-3.2-1B
-Batch Size: 408
+Batch Size: 327
 Number of GPUs: 3
 Max Memory per GPU: {0: 75000000000, 1: 75000000000, 2: 75000000000, 'cpu': 8000000000}
 Min New Tokens: 1

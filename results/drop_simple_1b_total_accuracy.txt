@@ -1,4 +1,4 @@
-Final Accuracy of simple on drop: 6.70%
+Final Accuracy of simple on drop (self-consistency: False): 6.70%
 Total Correct Answers: 67/1000 Questions
 
 Unextracted Answers: 0 samples

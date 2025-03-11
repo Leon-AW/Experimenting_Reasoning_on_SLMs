@@ -1,5 +1,5 @@
-Final Accuracy of cot on arc (self-consistency: True): 34.80%
-Total Correct Answers: 348/1000 Questions
+Final Accuracy of plan on mmlu (self-consistency: True): 36.30%
+Total Correct Answers: 363/1000 Questions
 
 Unextracted Answers: 0 samples
 

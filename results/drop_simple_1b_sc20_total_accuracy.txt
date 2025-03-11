@@ -1,5 +1,5 @@
-Final Accuracy of cot on arc (self-consistency: True): 34.80%
-Total Correct Answers: 348/1000 Questions
+Final Accuracy of simple on drop (self-consistency: True): 9.50%
+Total Correct Answers: 95/1000 Questions
 
 Unextracted Answers: 0 samples
 

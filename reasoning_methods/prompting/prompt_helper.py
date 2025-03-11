@@ -3,7 +3,7 @@ from .config import PROMPT_TEMPLATES
 # Function to get the appropriate prompt template based on dataset type
 def get_prompt_template(template_name, dataset_name):
     """Returns the appropriate prompt template based on dataset type"""
-    numeric_datasets = ["gsm8k", "drop"]
+    numeric_datasets = ["gsm8k", "drop", "math"]
     template_type = "numeric" if dataset_name in numeric_datasets else "multiple_choice"
     return PROMPT_TEMPLATES[template_name][template_type]
 

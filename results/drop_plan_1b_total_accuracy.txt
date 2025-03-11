@@ -1,5 +1,5 @@
-Final Accuracy of cot on arc (self-consistency: True): 34.80%
-Total Correct Answers: 348/1000 Questions
+Final Accuracy of plan on drop (self-consistency: False): 3.40%
+Total Correct Answers: 34/1000 Questions
 
 Unextracted Answers: 0 samples
 
@@ -15,7 +15,6 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: True
-Self Consistency Paths: 20
+Self Consistency: False
 Device: cuda
 Random Seed: 42
