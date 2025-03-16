@@ -234,6 +234,7 @@ When enabled with the `--self_consistency` flag, the system will:
 │       ├── generate_results_table.py
 │       └── results/
 │           ├── {dataset}_{template}_{model_size}{_sc[paths]}_total_accuracy.txt
+│       └── debug_csvs/
 │           ├── {dataset}_{template}_{model_size}{_sc[paths]}_results.csv
 ├── requirements.txt
 └── README.md
