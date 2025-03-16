@@ -4,7 +4,7 @@ This is a study project for Humboldt University of Berlin focused on experimenti
 
 ## Overview
 
-The experiment evaluates LLaMA-3 models (1B and 3B) on various mathematical and reasoning datasets using different zero-shot prompting strategies:
+The experiment evaluates Llama 3.2 models (1B and 3B) on various mathematical and reasoning datasets using different zero-shot prompting strategies:
 - Simple prompting
 - Chain-of-thought prompting
 - Role-based prompting
@@ -78,15 +78,15 @@ accelerate>=0.26.0
 
    ### Command Line Arguments
    - `--dataset`: Choose the dataset to evaluate (default: 'gsm8k')
-     - Options: ['gsm8k', 'race', 'arc', 'mmlu', 'drop', 'agieval'] (See `config.py` startLine: 15 endLine: 59 for configuration details)
-   - `--model_size`: Specify LLaMA-3 model size (default: '1b')
-     - Options: ['1b', '3b'] (See `main.py` startLine: 34 endLine: 36)
-   - `--debug`: Enable debug mode for detailed output (optional) (See `main.py` startLine: 32 endLine: 33 and the processor files for implementation details)
-   - `--self_consistency`: Enable self-consistency with multiple paths (optional). Uses 20 paths by default. (See `main.py` startLine: 37 endLine: 39 and `config.py` startLine: 12 and the processor files for implementation)
+     - Options: ['gsm8k', 'race', 'arc', 'mmlu', 'drop', 'agieval']
+   - `--model_size`: Specify Llama 3.2 model size (default: '1b')
+     - Options: ['1b', '3b']
+   - `--debug`: Enable debug mode for detailed output (optional)
+   - `--self_consistency`: Enable self-consistency with multiple paths (optional). Uses 20 paths by default.
 
    ### Example Commands
    ```bash
-   # Evaluate GSM8K with LLaMA-3B
+   # Evaluate GSM8K with Llama 3.2B
    python -m reasoning_methods.prompting.main --dataset gsm8k --model_size 3b
 
    # Evaluate RACE with LLaMA-1B in debug mode
@@ -96,9 +96,86 @@ accelerate>=0.26.0
    python -m reasoning_methods.prompting.main --dataset gsm8k --model_size 1b --self_consistency
    ```
 
+## Prompting Strategies
+
+The code implements four different prompting strategies, configurable in `config.py`:
+
+1. **Simple Prompting**: Direct question-answer format.
+   - **Numeric Example**: 
+     ```
+     Problem: {question}
+     Solution: 
+     ```
+   - **Multiple Choice Example**:
+     ```
+     Question: {question}
+
+     Options:
+     {options}
+     ```
+
+2. **Chain-of-Thought Prompting**: Step-by-step reasoning approach.
+   - **Numeric Example**:
+     ```
+     Problem: {question}
+
+     Solve and conclude your solution with 'The final answer is: <insert your answer here>'.
+
+     Let's think step by step: 
+     ```
+   - **Multiple Choice Example**:
+     ```
+     Question: {question}
+
+     Options:
+     {options}
+
+     Let's think step by step: 
+     ```
+
+3. **Role-Based Prompting**: Teacher-student interaction format.
+   - **Numeric Example**:
+     ```
+     User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
+     Assistant: That's great to hear! As your math teacher, I'll do my best to explain mathematical concepts correctly so that you can understand them easily. Finally I will conclude it with 'The final answer is: <insert your answer here>'. Feel free to ask any math problems or questions you have, and I'll be glad to assist you.
+     User: {question}
+     Assistant: 
+     ```
+   - **Multiple Choice Example**:
+     ```
+     User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
+     Assistant: That's great to hear! As your math teacher, I'll do my best to explain mathematical concepts correctly so that you can understand them easily. Feel free to ask any math problems or questions you have, and I'll be glad to assist you.
+     User: {question}
+     Options:
+     {options}
+     Assistant: 
+     ```
+
+4. **Plan-and-Solve Prompting**: Structured planning and solving approach.
+   - **Numeric Example**:
+     ```
+     Problem: {question}
+
+     Let's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate results (pay attention to calculation and common sense), solve the problem step by step, and then conclude it with 'The final answer is: <insert your answer here>'.
+     Let's begin: 
+     ```
+   - **Multiple Choice Example**:
+     ```
+     Question: {question}
+
+     Options:
+     {options}
+
+     Let's approach this systematically:
+     1. First, let's understand the question
+     2. Then, analyze each option carefully
+     3. Finally, choose the highest probability answer. 
+     Let's begin: 
+     ```
+
 ## Output
 
-The script generates two types of output files in the `results` directory:
+The script generates two types of output files in the `reasoning_methods/prompting/results/` directory:
 
 1. CSV Results File: `{dataset}_{template}_{model_size}{_sc[paths]}_results.csv`
    - Contains detailed results for each question
@@ -129,21 +206,12 @@ When running with `--debug`, the script provides detailed output for each exampl
 
 Debug mode also prints batch and overall accuracy summaries to the console during evaluation.
 
-## Prompting Strategies
-
-The code implements four different prompting strategies, configurable in `config.py` (startLine: 62 endLine: 104):
-
-1. **Simple**: Direct question-answer format. (See `config.py` startLine: 63 endLine: 67)
-2. **Chain**: Step-by-step reasoning approach, based on "Large Language Models are Zero-Shot Reasoners". (See `config.py` startLine: 68 endLine: 74)
-3. **Role**: Teacher-student interaction format, based on NAACL 2024 paper. (See `config.py` startLine: 75 endLine: 87)
-4. **Plan**: Structured planning and solving approach, based on "Plan-and-Solve Prompting". (See `config.py` startLine: 88 endLine: 103)
-
 ## Self-Consistency
 
 The project supports self-consistency sampling, which generates multiple reasoning paths and selects the most common answer. This can improve performance on reasoning tasks, especially for Chain-of-Thought prompting.
 
 When enabled with the `--self_consistency` flag, the system will:
-- Generate multiple reasoning paths (default: 20 paths, configurable in `config.py` startLine: 12)
+- Generate multiple reasoning paths (default: 20 paths)
 - Extract answers from each path
 - Select the most frequent answer as the final prediction
 
@@ -162,10 +230,11 @@ When enabled with the `--self_consistency` flag, the system will:
 │       ├── multiple_choice_processor.py
 │       ├── numeric_processor.py
 │       ├── process_dataset_batch.py
-│       └── prompts.py
-├── results/
-│   ├── {dataset}_{template}_{model_size}{_sc[paths]}_results.csv
-│   └── {dataset}_{template}_{model_size}{_sc[paths]}_total_accuracy.txt
+│       ├── prompt_helper.py
+│       ├── generate_results_table.py
+│       └── results/
+│           ├── {dataset}_{template}_{model_size}{_sc[paths]}_total_accuracy.txt
+│           ├── {dataset}_{template}_{model_size}{_sc[paths]}_results.csv
 ├── requirements.txt
 └── README.md
 ```
@@ -173,7 +242,7 @@ When enabled with the `--self_consistency` flag, the system will:
 ## Notes
 
 - Ensure sufficient GPU memory for model loading, especially for larger models and batch sizes. (See `dataset_utils.py` for hardware configuration and batch size details)
-- Results are saved automatically in the `results` directory.
+- Results are saved automatically in the `reasoning_methods/prompting/results/` directory.
 - Debug mode might slow down execution but provides detailed insights into the evaluation process.
 - Different datasets might require different evaluation metrics and prompt adjustments for optimal performance.
 - Self-consistency can significantly increase computation time due to multiple inference paths.
