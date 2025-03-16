@@ -78,7 +78,7 @@ accelerate>=0.26.0
 
    ### Command Line Arguments
    - `--dataset`: Choose the dataset to evaluate (default: 'gsm8k')
-     - Options: ['gsm8k', 'race', 'arc', 'mmlu', 'drop', 'agieval']
+     - Options: ['gsm8k', 'race', 'arc', 'mmlu', 'drop', 'gsm8k_2'] (See `config.py` startLine: 15 endLine: 59 for configuration details)
    - `--model_size`: Specify Llama 3.2 model size (default: '1b')
      - Options: ['1b', '3b']
    - `--debug`: Enable debug mode for detailed output (optional)
