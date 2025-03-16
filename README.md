@@ -17,12 +17,12 @@ The experiment evaluates LLaMA-3 models (1B and 3B) on various mathematical and 
 
 ## Supported Datasets
 
-- GSM8K: Grade School Math problems
+- GSM8K: Grade School Math problems Test-Set
+- GSM8K_2: Grade School Math problems Train-Set
 - RACE: Reading Comprehension
 - ARC: AI2 Reasoning Challenge
 - MMLU: Massive Multitask Language Understanding
 - DROP: Discrete Reasoning Over Paragraphs
-- AGIEVAL: A General Evaluation Benchmark for Large Language Models
 
 ## Requirements
 

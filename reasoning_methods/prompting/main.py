@@ -307,7 +307,7 @@ def main():
                 print(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}")
                 print(f"Total Correct Answers: {correct}/{total} Questions")
                 
-                os.makedirs('debug_csvs', exist_ok=True)
+                os.makedirs('reasoning_methods/prompting/debug_csvs', exist_ok=True)
                 sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if args.self_consistency else ""
                 csv_file_path = os.path.join('debug_csvs', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
                 with open(csv_file_path, mode='w', newline='') as file:
@@ -333,7 +333,7 @@ def main():
                         
                         writer.writerow(row)
 
-                txt_file_path = os.path.join('results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_total_accuracy.txt')
+                txt_file_path = os.path.join('reasoning_methods/prompting/results', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_total_accuracy.txt')
                 with open(txt_file_path, mode='w') as file:
                     file.write(f"Final Accuracy of {template_name} on {args.dataset}: {final_accuracy:.2%}\n")
                     file.write(f"Total Correct Answers: {correct}/{total} Questions\n")

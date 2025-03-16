@@ -1,4 +1,0 @@
-Final Accuracy of role on race: 21.20%
-Total Correct Answers: 212/1000 Questions
-
-Unextracted Answers: 0 samples
