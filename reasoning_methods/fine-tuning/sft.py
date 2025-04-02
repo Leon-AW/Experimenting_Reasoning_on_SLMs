@@ -28,7 +28,7 @@ python reasoning_methods/fine-tuning/sft.py \
     --logging_steps 25 \
     --eval_strategy no \
     --eval_steps 100 \
-    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full \
     --push_to_hub
 
 # LoRA
@@ -42,17 +42,16 @@ python reasoning_methods/fine-tuning/sft.py \
     --gradient_accumulation_steps 8 \
     --gradient_checkpointing \
     --logging_steps 25 \
-    --eval_strategy steps \
+    --eval_strategy no \
     --eval_steps 100 \
     --use_peft \
     --lora_r 32 \
     --lora_alpha 16 \
-    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA \
     --push_to_hub
 """
 
 import argparse
-
 from datasets import load_dataset
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
