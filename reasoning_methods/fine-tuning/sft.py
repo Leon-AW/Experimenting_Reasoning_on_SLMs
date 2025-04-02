@@ -16,7 +16,7 @@
 
 """
 # Full training
-python trl/scripts/sft.py \
+python reasoning_methods/fine-tuning/sft.py \
     --model_name_or_path meta-llama/Llama-3.2-1B \
     --dataset_name Open-Orca/SlimOrca-Dedup \
     --learning_rate 2.0e-5 \
@@ -26,13 +26,13 @@ python trl/scripts/sft.py \
     --gradient_accumulation_steps 8 \
     --gradient_checkpointing \
     --logging_steps 25 \
-    --eval_strategy steps \
+    --eval_strategy no \
     --eval_steps 100 \
-    --output_dir Qwen2-0.5B-SFT \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT \
     --push_to_hub
 
 # LoRA
-python trl/scripts/sft.py \
+python reasoning_methods/fine-tuning/sft.py \
     --model_name_or_path meta-llama/Llama-3.2-1B \
     --dataset_name Open-Orca/SlimOrca-Dedup \
     --learning_rate 2.0e-4 \
@@ -47,7 +47,7 @@ python trl/scripts/sft.py \
     --use_peft \
     --lora_r 32 \
     --lora_alpha 16 \
-    --output_dir Qwen2-0.5B-SFT \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT \
     --push_to_hub
 """
 
@@ -102,6 +102,21 @@ def main(script_args, training_args, model_args):
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+
+    # Set chat template for SlimOrca-Dedup dataset format
+    tokenizer.chat_template = """{% for message in messages %}
+    {% if message['from'] == 'system' %}
+    <|system|>
+    {{ message['value'] }}
+    {% elif message['from'] == 'human' %}
+    <|user|>
+    {{ message['value'] }}
+    {% elif message['from'] == 'gpt' %}
+    <|assistant|>
+    {{ message['value'] }}
+    {% endif %}
+    {% endfor %}
+    """
 
     ################
     # Dataset
