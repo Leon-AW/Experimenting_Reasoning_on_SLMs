@@ -28,7 +28,7 @@ python reasoning_methods/fine-tuning/sft.py \
     --logging_steps 25 \
     --eval_strategy no \
     --eval_steps 100 \
-    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full-SlimOrca- \
     --push_to_hub
 
 # LoRA
@@ -123,8 +123,8 @@ def main(script_args, training_args, model_args):
     dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
 
     # Limit to the first 100,000 samples
-    train_dataset = dataset[script_args.dataset_train_split].select(range(100000))
-    eval_dataset = dataset[script_args.dataset_test_split].select(range(100000)) if training_args.eval_strategy != "no" else None
+    train_dataset = dataset[script_args.dataset_train_split].select(range(50000))
+    eval_dataset = dataset[script_args.dataset_test_split].select(range(50000)) if training_args.eval_strategy != "no" else None
 
     ################
     # Training

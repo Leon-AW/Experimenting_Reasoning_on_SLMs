@@ -39,9 +39,10 @@ def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batc
         print(f"Total Correct Answers: {correct}/{total} Questions")
         
         # Save results and metrics
-        os.makedirs('debug_csvs', exist_ok=True)
+        os.makedirs('reasoning_methods/prompting/debug_csvs', exist_ok=True)
+        os.makedirs('reasoning_methods/prompting/results', exist_ok=True)
         sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if current_args.self_consistency else ""
-        csv_file_path = os.path.join('debug_csvs', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_results.csv')
+        csv_file_path = os.path.join('reasoning_methods/prompting/debug_csvs', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_results.csv')
         
         # Define fieldnames based on whether self-consistency is enabled
         fieldnames = ["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
@@ -56,7 +57,7 @@ def run_experiment(pipe, dataset, dataset_key, template_name, current_args, batc
             writer.writeheader()
             writer.writerows(results)
 
-        txt_file_path = os.path.join('results', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_total_accuracy.txt')
+        txt_file_path = os.path.join('reasoning_methods/prompting/results', f'{dataset_key}_{template_name}_{current_args.model_size}{sc_info}_total_accuracy.txt')
         with open(txt_file_path, mode='w') as file:
             file.write(f"Final Accuracy of {template_name} on {dataset_key} (self-consistency: {current_args.self_consistency}): {final_accuracy:.2%}\n")
             file.write(f"Total Correct Answers: {correct}/{total} Questions\n")
@@ -125,8 +126,8 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode')
     parser.add_argument('--model_size', type=str, default='1b',
-                        choices=['1b', '3b'],
-                        help='LLaMA model size (1b or 3b)')
+                        choices=['1b', '3b', '1b-sft-full', '1b-sft-lora'],
+                        help='LLaMA model size (1b, 3b) or fine-tuned variant (1b-sft-full, 1b-sft-lora)')
     parser.add_argument('--self_consistency', action='store_true',
                         help='Enable self-consistency with multiple paths')
     parser.add_argument('--template', type=str, default=None,
@@ -135,7 +136,9 @@ def main():
     args = parser.parse_args()
 
     # Set environment variable for model size to optimize batch size in dataset_utils
-    os.environ['MODEL_SIZE'] = args.model_size
+    # For SFT models, use the base model size for batch sizing
+    base_model_size = args.model_size.split('-')[0]
+    os.environ['MODEL_SIZE'] = base_model_size
 
     # If no additional CLI arguments (besides the module name) are provided,
     # then perform a full sweep over datasets, models, templates, and SC settings.
@@ -143,15 +146,21 @@ def main():
     summary_results = []  # to accumulate experiment summaries
 
     if full_sweep:
-        print("Running full sweep (all datasets, all prompt templates, all self-consistency settings, both model sizes)")
-        for model_size in ["1b", "3b"]:
+        print("Running full sweep (all datasets, all prompt templates, all self-consistency settings, all model sizes)")
+        for model_size in ["1b", "3b", "1b-sft-full", "1b-sft-lora"]:
             print(f"\n{'#'*50}\nRunning experiments for model size: {model_size}\n{'#'*50}\n")
             # Configure hardware and load model/tokenizer for this model_size
             device, batch_size, num_gpus, max_memory = configure_hardware()
             print(f"Detected device: {device}")
             print(f"Using hyperparameters: BATCH_SIZE={batch_size}, NUM_GPUS={num_gpus}, MAX_MEMORY={max_memory}")
             
-            MODEL_NAME = f"meta-llama/Llama-3.2-{model_size.upper()}"
+            # Determine model path based on model_size
+            if model_size == "1b-sft-full":
+                MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full"
+            elif model_size == "1b-sft-lora":
+                MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA"
+            else:
+                MODEL_NAME = f"meta-llama/Llama-3.2-{model_size.upper()}"
             
             # Advanced model loading optimizations
             print(f"Loading model {MODEL_NAME} with optimized settings...")
@@ -199,14 +208,19 @@ def main():
             # Ensure tokenizer settings are applied to pipeline
             pipe.tokenizer.pad_token = pipe.tokenizer.eos_token
             pipe.tokenizer.pad_token_id = pipe.tokenizer.eos_token_id
-            pipe.tokenizer.padding_side = 'left'
+            pipe.tokenizer.padding_side = 'left'  # Left padding for more efficient batching
 
             # Loop over every dataset
             for dataset_key, dataset_config in DATASET_CONFIGS.items():
                 print(f"\n{'='*50}\nDataset: {dataset_key}\n{'='*50}\n")
                 dataset = load_custom_dataset(dataset_config)
-                # Loop over self-consistency settings: for 1b run both, for 3b run only False
-                for sc in ([False, True] if model_size == "1b" else [False]):
+                # Loop over self-consistency settings: for base models run both, for fine-tuned models only run without SC
+                if model_size in ["1b-sft-full", "1b-sft-lora"]:
+                    sc_settings = [False]  # Only run without self-consistency for fine-tuned models
+                else:
+                    sc_settings = [False, True] if model_size == "1b" else [False]  # For 1b run both, for 3b run only False
+                    
+                for sc in sc_settings:
                     print(f"\n{'-'*50}\nSelf Consistency: {sc}\n{'-'*50}\n")
                     # Loop over every prompt template available
                     for template_name in PROMPT_TEMPLATES.keys():
@@ -230,18 +244,24 @@ def main():
         # Print a summary table for all experiments.
         if summary_results:
             print("\nSummary Table of Results:\n")
-            header = f"{'Dataset':<10} {'Template':<12} {'Model':<6} {'SC':<6} {'Acc %':<8} {'Correct':<8} {'Total':<8}"
+            header = f"{'Dataset':<10} {'Template':<12} {'Model':<12} {'SC':<6} {'Acc %':<8} {'Correct':<8} {'Total':<8}"
             print(header)
             print("-" * len(header))
             for entry in summary_results:
-                print(f"{entry['dataset']:<10} {entry['template']:<12} {entry['model_size']:<6} {str(entry['self_consistency']):<6} {entry['accuracy']*100:<8.2f} {entry['correct']:<8} {entry['total']:<8}")
+                print(f"{entry['dataset']:<10} {entry['template']:<12} {entry['model_size']:<12} {str(entry['self_consistency']):<6} {entry['accuracy']*100:<8.2f} {entry['correct']:<8} {entry['total']:<8}")
     else:
         # Normal behavior based on provided CLI options.
         device, batch_size, num_gpus, max_memory = configure_hardware()
         print(f"Detected device: {device}")
         print(f"Using hyperparameters: BATCH_SIZE={batch_size}, NUM_GPUS={num_gpus}, MAX_MEMORY={max_memory}")
 
-        MODEL_NAME = f"meta-llama/Llama-3.2-{args.model_size.upper()}"
+        # Determine model path based on model_size
+        if args.model_size == "1b-sft-full":
+            MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full"
+        elif args.model_size == "1b-sft-lora":
+            MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA"
+        else:
+            MODEL_NAME = f"meta-llama/Llama-3.2-{args.model_size.upper()}"
         
         # Advanced model loading optimizations
         print(f"Loading model {MODEL_NAME} with optimized settings...")
@@ -308,8 +328,9 @@ def main():
                 print(f"Total Correct Answers: {correct}/{total} Questions")
                 
                 os.makedirs('reasoning_methods/prompting/debug_csvs', exist_ok=True)
+                os.makedirs('reasoning_methods/prompting/results', exist_ok=True)
                 sc_info = f"_sc{SELF_CONSISTENCY_PATHS}" if args.self_consistency else ""
-                csv_file_path = os.path.join('debug_csvs', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
+                csv_file_path = os.path.join('reasoning_methods/prompting/debug_csvs', f'{args.dataset}_{template_name}_{args.model_size}{sc_info}_results.csv')
                 with open(csv_file_path, mode='w', newline='') as file:
                     # Add sc_paths to fieldnames if self-consistency is enabled
                     fieldnames = ["sample_index", "question", "prompt", "generated_text", "pred_answer", "gold_answer", "is_correct"]
