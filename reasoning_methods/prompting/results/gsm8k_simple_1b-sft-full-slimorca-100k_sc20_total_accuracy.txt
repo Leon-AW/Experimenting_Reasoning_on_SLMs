@@ -1,0 +1,21 @@
+Final Accuracy of simple on gsm8k: 6.90%
+Total Correct Answers: 69/1000 Questions
+
+Unextracted Answers: 0 samples
+
+Hyperparameters:
+Model: reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full-SlimOrca-100k
+Batch Size: 259
+Number of GPUs: 3
+Max Memory per GPU: {0: 75000000000, 1: 75000000000, 2: 75000000000, 'cpu': 8000000000}
+Min New Tokens: 1
+Max New Tokens: 256
+Temperature: 0.5
+Top P: 0.9
+Top K: 0
+Do Sample: True
+Number of Return Sequences: 1
+Self Consistency: True
+Self Consistency Paths: 20
+Device: cuda
+Random Seed: 42

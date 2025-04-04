@@ -28,7 +28,7 @@ python reasoning_methods/fine-tuning/sft.py \
     --logging_steps 25 \
     --eval_strategy no \
     --eval_steps 100 \
-    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full-SlimOrca- \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full-SlimOrca-100k \
     --push_to_hub
 
 # LoRA
