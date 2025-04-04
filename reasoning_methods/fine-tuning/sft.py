@@ -47,7 +47,7 @@ python reasoning_methods/fine-tuning/sft.py \
     --use_peft \
     --lora_r 32 \
     --lora_alpha 16 \
-    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA \
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA-All \
     --push_to_hub
 """
 
@@ -102,12 +102,9 @@ def main(script_args, training_args, model_args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Set chat template for SlimOrca-Dedup dataset format
+    # Set chat template to only include human and assistant messages, removing system prompts
     tokenizer.chat_template = """{% for message in messages %}
-    {% if message['from'] == 'system' %}
-    <|system|>
-    {{ message['value'] }}
-    {% elif message['from'] == 'human' %}
+    {% if message['from'] == 'human' %}
     <|user|>
     {{ message['value'] }}
     {% elif message['from'] == 'gpt' %}
@@ -123,8 +120,8 @@ def main(script_args, training_args, model_args):
     dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
 
     # Limit to the first 100,000 samples
-    train_dataset = dataset[script_args.dataset_train_split].select(range(50000))
-    eval_dataset = dataset[script_args.dataset_test_split].select(range(50000)) if training_args.eval_strategy != "no" else None
+    train_dataset = dataset[script_args.dataset_train_split].select(range(100000))
+    eval_dataset = dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None
 
     ################
     # Training

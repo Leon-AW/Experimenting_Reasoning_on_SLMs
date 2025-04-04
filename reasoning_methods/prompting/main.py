@@ -126,8 +126,8 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode')
     parser.add_argument('--model_size', type=str, default='1b',
-                        choices=['1b', '3b', '1b-sft-full', '1b-sft-lora'],
-                        help='LLaMA model size (1b, 3b) or fine-tuned variant (1b-sft-full, 1b-sft-lora)')
+                        choices=['1b', '3b', '1b-sft-full', '1b-sft-lora', '1b-sft-lora-all'],
+                        help='LLaMA model size (1b, 3b) or fine-tuned variant (1b-sft-full, 1b-sft-lora, 1b-sft-lora-all)')
     parser.add_argument('--self_consistency', action='store_true',
                         help='Enable self-consistency with multiple paths')
     parser.add_argument('--template', type=str, default=None,
@@ -147,7 +147,7 @@ def main():
 
     if full_sweep:
         print("Running full sweep (all datasets, all prompt templates, all self-consistency settings, all model sizes)")
-        for model_size in ["1b", "3b", "1b-sft-full", "1b-sft-lora"]:
+        for model_size in ["1b", "3b", "1b-sft-full", "1b-sft-lora", "1b-sft-lora-all"]:
             print(f"\n{'#'*50}\nRunning experiments for model size: {model_size}\n{'#'*50}\n")
             # Configure hardware and load model/tokenizer for this model_size
             device, batch_size, num_gpus, max_memory = configure_hardware()
@@ -159,6 +159,8 @@ def main():
                 MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full"
             elif model_size == "1b-sft-lora":
                 MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA"
+            elif model_size == "1b-sft-lora-all":
+                MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA-All"
             else:
                 MODEL_NAME = f"meta-llama/Llama-3.2-{model_size.upper()}"
             
@@ -215,7 +217,7 @@ def main():
                 print(f"\n{'='*50}\nDataset: {dataset_key}\n{'='*50}\n")
                 dataset = load_custom_dataset(dataset_config)
                 # Loop over self-consistency settings: for base models run both, for fine-tuned models only run without SC
-                if model_size in ["1b-sft-full", "1b-sft-lora"]:
+                if model_size in ["1b-sft-full", "1b-sft-lora", "1b-sft-lora-all"]:
                     sc_settings = [False]  # Only run without self-consistency for fine-tuned models
                 else:
                     sc_settings = [False, True] if model_size == "1b" else [False]  # For 1b run both, for 3b run only False
@@ -260,6 +262,8 @@ def main():
             MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full"
         elif args.model_size == "1b-sft-lora":
             MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA"
+        elif args.model_size == "1b-sft-lora-all":
+            MODEL_NAME = "reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA-All"
         else:
             MODEL_NAME = f"meta-llama/Llama-3.2-{args.model_size.upper()}"
         
