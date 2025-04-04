@@ -102,7 +102,7 @@ def main(script_args, training_args, model_args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Set chat template to only include human and assistant messages, removing system prompts
+    # chat template to only include human and assistant messages, removing system prompts
     tokenizer.chat_template = """{% for message in messages %}
     {% if message['from'] == 'human' %}
     <|user|>
