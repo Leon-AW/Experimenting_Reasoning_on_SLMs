@@ -1,0 +1,20 @@
+Final Accuracy of role on gsm8k: 32.30%
+Total Correct Answers: 323/1000 Questions
+
+Unextracted Answers: 0 samples
+
+Hyperparameters:
+Model: meta-llama/Llama-3.2-1B-Instruct
+Batch Size: 408
+Number of GPUs: 3
+Max Memory per GPU: {0: 75000000000, 1: 75000000000, 2: 75000000000, 'cpu': 8000000000}
+Min New Tokens: 1
+Max New Tokens: 256
+Temperature: 0.5
+Top P: 0.9
+Top K: 0
+Do Sample: True
+Number of Return Sequences: 1
+Self Consistency: False
+Device: cuda
+Random Seed: 42

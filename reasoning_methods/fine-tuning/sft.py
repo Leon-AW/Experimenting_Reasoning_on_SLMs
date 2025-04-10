@@ -22,7 +22,7 @@ python reasoning_methods/fine-tuning/sft.py \
     --learning_rate 2.0e-5 \
     --num_train_epochs 1 \
     --packing \
-    --per_device_train_batch_size 2 \
+    --per_device_train_batch_size 32 \
     --gradient_accumulation_steps 8 \
     --gradient_checkpointing \
     --logging_steps 25 \
