@@ -58,52 +58,71 @@ DATASET_CONFIG = [
 ]
 
 # --- Formatierungsfunktionen (Anpassung an ChatML-ähnliches Format) ---
-# Zielformat: {'messages': [{'from': 'human', 'value': '...'}, {'from': 'gpt', 'value': '...'}]}
+# Zielformat: {'messages': [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]}
 
 def format_slimorca(example):
     # SlimOrca ist oft schon in einem Konversationsformat
     # Wir nehmen an, es hat 'conversations' mit 'from' ('human'/'gpt') und 'value'
-    # Eventuell leichte Anpassung nötig, je nach genauer Struktur
+    # Passe Schlüssel und Rollen an das Zielformat an
     if 'conversations' in example and isinstance(example['conversations'], list):
-         # Behalte nur human/gpt turns, falls andere existieren
-        messages = [msg for msg in example['conversations'] if msg.get('from') in ['human', 'gpt']]
-        # Stelle sicher, dass es mit human beginnt und mit gpt endet (optional, aber oft sinnvoll)
-        if messages and messages[0].get('from') == 'human' and messages[-1].get('from') == 'gpt':
+        messages = []
+        for msg in example['conversations']:
+            role = msg.get('from')
+            value = msg.get('value')
+            if role == 'human':
+                messages.append({'role': 'user', 'content': value})
+            elif role == 'gpt':
+                messages.append({'role': 'assistant', 'content': value})
+            # Ignoriere andere Rollen wie 'system' hier vorerst,
+            # oder füge sie hinzu, falls vom SFT-Setup unterstützt/gewünscht
+            # elif role == 'system':
+            #     messages.append({'role': 'system', 'content': value})
+
+        # Stelle sicher, dass es mit user beginnt und mit assistant endet (optional, aber oft sinnvoll)
+        if messages and messages[0].get('role') == 'user' and messages[-1].get('role') == 'assistant':
             return {"messages": messages}
     return None # Ignoriere Beispiele, die nicht passen
 
 def format_arc(example):
     question = example['question']
-    choices_text = "\n".join([f"{label}. {text}" for label, text in zip(example['choices']['label'], example['choices']['text'])])
-    prompt = f"{question}\n\nWähle die korrekte Antwort aus den folgenden Optionen:\n{choices_text}"
+    choices_text = "\\n".join([f"{label}. {text}" for label, text in zip(example['choices']['label'], example['choices']['text'])])
+    prompt = f"{question}\\n\\nWähle die korrekte Antwort aus den folgenden Optionen:\\n{choices_text}"
     answer = example['answerKey'] # Nur der Buchstabe A, B, C, D etc.
-    return {"messages": [{'from': 'human', 'value': prompt}, {'from': 'gpt', 'value': answer}]}
+    # Finde den Text zur Antwort
+    try:
+        answer_text = example['choices']['text'][example['choices']['label'].index(answer)]
+        full_answer = f"{answer}. {answer_text}"
+    except (ValueError, IndexError):
+        full_answer = answer # Fallback auf den Key selbst
+
+    return {"messages": [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': full_answer}]}
 
 def format_commonsense_qa(example):
     question = example['question']
-    choices_text = "\n".join([f"{label}. {text}" for label, text in zip(example['choices']['label'], example['choices']['text'])])
-    prompt = f"{question}\n\nWähle die beste Antwort aus den folgenden Optionen:\n{choices_text}"
+    choices_text = "\\n".join([f"{label}. {text}" for label, text in zip(example['choices']['label'], example['choices']['text'])])
+    prompt = f"{question}\\n\\nWähle die beste Antwort aus den folgenden Optionen:\\n{choices_text}"
     answer = example.get('answerKey', '') # Manchmal fehlt der Key? Sicherstellen, dass er da ist.
     # Finde den Text zur Antwort
     try:
         answer_text = example['choices']['text'][example['choices']['label'].index(answer)]
+        full_answer = f"{answer}. {answer_text}"
     except (ValueError, IndexError):
-        answer_text = answer # Fallback auf den Key selbst
+        full_answer = answer # Fallback auf den Key selbst
     if not answer: return None # Ignoriere Beispiele ohne Antwortkey
-    return {"messages": [{'from': 'human', 'value': prompt}, {'from': 'gpt', 'value': f"{answer}. {answer_text}"}]}
+    return {"messages": [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': full_answer}]}
 
 
 def format_gsm8k(example):
     # Nutzt die Chain-of-Thought Antwort
     question = example['question']
     answer = example['answer'] # Enthält oft "Lösung: ..."
-    return {"messages": [{'from': 'human', 'value': question}, {'from': 'gpt', 'value': answer}]}
+    return {"messages": [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer}]}
 
 def format_metamathqa(example):
     # MetaMath hat oft 'query' und 'response'
     question = example['query']
     answer = example['response']
-    return {"messages": [{'from': 'human', 'value': question}, {'from': 'gpt', 'value': answer}]}
+    return {"messages": [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer}]}
 
 def format_squad(example):
     # Wir brauchen Kontext, Frage und Antwort
@@ -111,14 +130,14 @@ def format_squad(example):
     question = example['question']
     # Nimm die erste Antwort, SQuAD kann mehrere haben
     answer = example['answers']['text'][0] if example['answers']['text'] else "Keine Antwort gefunden."
-    prompt = f"Kontext:\n{context}\n\nFrage:\n{question}\n\nAntworte basierend auf dem Kontext."
-    return {"messages": [{'from': 'human', 'value': prompt}, {'from': 'gpt', 'value': answer}]}
+    prompt = f"Kontext:\\n{context}\\n\\nFrage:\\n{question}\\n\\nAntworte basierend auf dem Kontext."
+    return {"messages": [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': answer}]}
 
 def format_truthful_qa(example):
     # Nutzt Frage und die beste Antwort
     question = example['question']
     answer = example['best_answer']
-    return {"messages": [{'from': 'human', 'value': question}, {'from': 'gpt', 'value': answer}]}
+    return {"messages": [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer}]}
 
 # Mapping von Funktionsnamen (Strings) zu tatsächlichen Funktionen
 FORMATTERS = {
@@ -159,7 +178,7 @@ for config in DATASET_CONFIG:
         # Filtere Beispiele heraus, bei denen die Formatierung fehlgeschlagen ist (None zurückgegeben hat)
         formatted_ds = formatted_ds.filter(lambda example: example is not None and example.get('messages') is not None)
         # Filtere Beispiele ohne Antwort
-        formatted_ds = formatted_ds.filter(lambda example: len(example['messages']) > 0 and example['messages'][-1]['from'] == 'gpt' and example['messages'][-1]['value'])
+        formatted_ds = formatted_ds.filter(lambda example: len(example['messages']) > 0 and example['messages'][-1]['role'] == 'assistant' and example['messages'][-1]['content'])
 
 
         print(f"-> {len(formatted_ds)} formatierte Beispiele hinzugefügt.")

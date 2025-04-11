@@ -159,6 +159,8 @@ cython_debug/
 
 filestructure.txt
 /models/base_model
+reasoning_methods/fine-tuning/mixed_finetuning_dataset/
+wandb/
 
 # Only exclude training/checkpoint files but keep model files
 reasoning_methods/fine-tuning/**/optimizer.pt

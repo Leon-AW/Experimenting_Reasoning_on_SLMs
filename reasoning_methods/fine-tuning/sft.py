@@ -1,6 +1,4 @@
-# Code from https://github.com/huggingface/trl/blob/main/trl/scripts/sft.py
-# 
-# Copyright 2025 The HuggingFace Team. All rights reserved.
+# Copyright 2020-2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,19 +20,38 @@ python reasoning_methods/fine-tuning/sft.py \
     --learning_rate 2.0e-5 \
     --num_train_epochs 1 \
     --packing \
-    --per_device_train_batch_size 32 \
+    --per_device_train_batch_size 2 \
     --gradient_accumulation_steps 8 \
     --gradient_checkpointing \
     --logging_steps 25 \
-    --eval_strategy no \
+    --eval_strategy steps \
     --eval_steps 100 \
-    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Full-SlimOrca-100k \
-    --push_to_hub
+    --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Mixed \
+    
+#Try to train with all 4 GPUs on gruenau8
+    /vol/fob-vol1/mi23/wagnerql/.conda/envs/study_project_env/bin/accelerate launch \
+        --num_processes 4 \
+        --mixed_precision bf16 \
+        reasoning_methods/fine-tuning/sft.py \
+        --model_name_or_path meta-llama/Llama-3.2-1B \
+        --dataset_name reasoning_methods/fine-tuning/mixed_finetuning_dataset \
+        --dataset_test_split validation \
+        --learning_rate 2.0e-5 \
+        --num_train_epochs 3 \
+        --packing \
+        --bf16 \
+        --per_device_train_batch_size 1 \
+        --gradient_accumulation_steps 16 \
+        --gradient_checkpointing \
+        --logging_steps 25 \
+        --eval_strategy steps \
+        --eval_steps 100 \
+        --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Mixed-Reasoning
 
 # LoRA
-python reasoning_methods/fine-tuning/sft.py \
-    --model_name_or_path meta-llama/Llama-3.2-1B \
-    --dataset_name Open-Orca/SlimOrca-Dedup \
+python trl/scripts/sft.py \
+    --model_name_or_path Qwen/Qwen2-0.5B \
+    --dataset_name trl-lib/Capybara \
     --learning_rate 2.0e-4 \
     --num_train_epochs 1 \
     --packing \
@@ -42,17 +59,17 @@ python reasoning_methods/fine-tuning/sft.py \
     --gradient_accumulation_steps 8 \
     --gradient_checkpointing \
     --logging_steps 25 \
-    --eval_strategy no \
+    --eval_strategy steps \
     --eval_steps 100 \
     --use_peft \
     --lora_r 32 \
     --lora_alpha 16 \
     --output_dir reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-LoRA-All \
-    --push_to_hub
 """
 
 import argparse
-from datasets import load_dataset
+
+from datasets import load_dataset, load_from_disk
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.models.auto.modeling_auto import MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES
 
@@ -99,29 +116,39 @@ def main(script_args, training_args, model_args):
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.model_name_or_path, trust_remote_code=model_args.trust_remote_code, use_fast=True
     )
+
+    # Define Llama 3 chat template
+    LLAMA3_CHAT_TEMPLATE = (
+        "{% set loop_messages = messages %}"
+        "{% for message in loop_messages %}"
+            "{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n' + message['content'] | trim + '<|eot_id|>' %}"
+            "{% if loop.index0 == 0 %}"
+                "{% set content = bos_token + content %}"
+            "{% endif %}"
+            "{{ content }}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+            "{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}"
+        "{% endif %}"
+    )
+
+    # Set chat template
+    tokenizer.chat_template = LLAMA3_CHAT_TEMPLATE
+
+    # Set padding token if necessary (often needed, Llama usually doesn't have a default pad token)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-
-    # chat template to only include human and assistant messages, removing system prompts
-    tokenizer.chat_template = """{% for message in messages %}
-    {% if message['from'] == 'human' %}
-    <|user|>
-    {{ message['value'] }}
-    {% elif message['from'] == 'gpt' %}
-    <|assistant|>
-    {{ message['value'] }}
-    {% endif %}
-    {% endfor %}
-    """
+        # If the model config doesn't have pad_token_id, set it in the model config as well
+        # This ensures consistency, especially important for generation tasks later
+        # model.config is accessible if model is loaded before this point
+        if hasattr(model, 'config') and model.config.pad_token_id is None:
+             model.config.pad_token_id = tokenizer.eos_token_id
 
     ################
     # Dataset
     ################
-    dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
-
-    # Limit to the first 100,000 samples
-    train_dataset = dataset[script_args.dataset_train_split].select(range(100000))
-    eval_dataset = dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None
+    # Load dataset from disk
+    dataset = load_from_disk(script_args.dataset_name)
 
     ################
     # Training
@@ -129,8 +156,8 @@ def main(script_args, training_args, model_args):
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        train_dataset=dataset[script_args.dataset_train_split],
+        eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
         processing_class=tokenizer,
         peft_config=get_peft_config(model_args),
     )

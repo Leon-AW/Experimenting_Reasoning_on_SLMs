@@ -1,0 +1,21 @@
+Final Accuracy of cot on gsm8k: 26.10%
+Total Correct Answers: 261/1000 Questions
+
+Unextracted Answers: 0 samples
+
+Hyperparameters:
+Model: reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Mixed-Reasoning/checkpoint-1500
+Batch Size: 51
+Number of GPUs: 4
+Max Memory per GPU: {0: 34000000000, 1: 40000000000, 2: 40000000000, 3: 40000000000, 'cpu': 2000000000}
+Min New Tokens: 1
+Max New Tokens: 256
+Temperature: 0.5
+Top P: 0.9
+Top K: 0
+Do Sample: True
+Number of Return Sequences: 1
+Self Consistency: True
+Self Consistency Paths: 20
+Device: cuda
+Random Seed: 42
