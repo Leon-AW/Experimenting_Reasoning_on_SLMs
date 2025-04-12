@@ -1,0 +1,95 @@
+import os
+
+# Determine the directory of the current script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+PROMPT_DIR = os.path.join(script_dir, "prompts") # Look for prompts within the script's directory
+
+Q: What might a person hide in their hand?
+Answer Choices:
+(a) watch
+(b) coin
+(c) statue
+(d) refrigerator
+(e) car
+A: The question asks what a person might hide in their hand. Hands are relatively small and can conceal small objects. Among the choices, a watch could be held but usually worn, a statue, refrigerator, and car are too large. A coin is small and commonly held or hidden in a hand. Therefore, the answer is coin (b).
+
+Q: Where would you typically find a stage?
+Answer Choices:
+(a) kitchen
+(b) theater
+(c) closet
+(d) pool
+(e) street
+A: The question asks for a typical location of a stage. A stage is a raised platform used for performances. Kitchens, closets, pools, and streets are generally not locations for stages. Theaters are specifically designed venues that contain stages for performances like plays or concerts. Therefore, the answer is theater (b).
+
+Q: If you want to keep food cold, where should you put it?
+Answer Choices:
+(a) oven
+(b) pantry
+(c) refrigerator
+(d) sink
+(e) cupboard
+A: The question is about storing food to keep it cold. An oven is used for heating, a pantry and cupboard are for storing dry goods at room temperature, and a sink is for washing. A refrigerator is an appliance specifically designed to keep food cold. Therefore, the answer is refrigerator (c).
+
+Q: What activity involves hitting a ball over a net?
+Answer Choices:
+(a) swimming
+(b) running
+(c) reading
+(d) tennis
+(e) sleeping
+A: The question asks for an activity involving hitting a ball over a net. Swimming, running, reading, and sleeping do not involve this action. Tennis is a sport where players use rackets to hit a ball back and forth over a net. Therefore, the answer is tennis (d).
+
+Q: What object is used to unlock a door?
+Answer Choices:
+(a) key
+(b) hammer
+(c) book
+(d) pillow
+(e) plate
+A: The question asks what is used to unlock a door. A hammer is for hitting, a book for reading, a pillow for sleeping, and a plate for eating. A key is specifically designed to fit into a lock mechanism and unlock a door. Therefore, the answer is key (a).
+
+Q: What is the primary purpose of sunglasses?
+Answer Choices:
+(a) improve hearing
+(b) keep warm
+(c) protect eyes from sun
+(d) clean teeth
+(e) write notes
+A: The question asks for the main reason people wear sunglasses. Sunglasses are worn on the face, covering the eyes. Their dark lenses reduce the amount of sunlight reaching the eyes. Improving hearing, keeping warm, cleaning teeth, or writing notes are not functions of sunglasses. Therefore, the answer is protect eyes from sun (c).
+
+Q: What kind of animal typically lives in a stable?
+Answer Choices:
+(a) fish
+(b) bird
+(c) horse
+(d) snake
+(e) insect
+A: The question asks what animal lives in a stable. A stable is a building specifically designed for housing livestock, particularly horses. Fish live in water, birds often in nests or cages, snakes in various environments, and insects are widespread. Horses are commonly kept in stables. Therefore, the answer is horse (c).
+
+Q: What do you use to write on a blackboard?
+Answer Choices:
+(a) pen
+(b) crayon
+(c) chalk
+(d) marker
+(e) paint
+A: The question asks what is used for writing on a blackboard. Blackboards have a dark, rough surface. Pens, crayons, markers, and paint are not typically used on blackboards and may not work well or be erasable. Chalk is specifically designed for writing on blackboards and is easily erasable. Therefore, the answer is chalk (c).
+
+Q: If you are very tired, what are you likely to do?
+Answer Choices:
+(a) run a race
+(b) climb a mountain
+(c) go swimming
+(d) go to sleep
+(e) play soccer
+A: The question asks what a very tired person is likely to do. Running, climbing, swimming, and playing soccer are all physically demanding activities that require energy. When very tired, the body needs rest. Going to sleep is the natural way to recover from tiredness. Therefore, the answer is go to sleep (d).
+
+Q: What is a common breakfast food made from grain?
+Answer Choices:
+(a) steak
+(b) salad
+(c) cereal
+(d) ice cream
+(e) soup
+A: The question asks for a common breakfast food made from grain. Steak is meat, salad is usually vegetables, ice cream is a frozen dessert, and soup is typically savory liquid. Cereal is a widely consumed breakfast food explicitly made from processed grains like corn, wheat, oats, or rice. Therefore, the answer is cereal (c). 
