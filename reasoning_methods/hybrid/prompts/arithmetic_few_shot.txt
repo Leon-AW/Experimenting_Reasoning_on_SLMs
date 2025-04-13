@@ -1,0 +1,133 @@
+Q: What is 27 + 45?
+Answer Choices:
+(a) 62
+(b) 72
+(c) 78
+(d) 70
+(e) 82
+A: To add 27 and 45, add the tens and ones separately:
+20 + 40 = 60
+7 + 5 = 12
+60 + 12 = 72
+Therefore, the answer is 72 (b).
+
+⸻
+
+Q: What is 96 - 38?
+Answer Choices:
+(a) 58
+(b) 64
+(c) 68
+(d) 56
+(e) 60
+A: Subtract 38 from 96. Break it down:
+96 - 30 = 66
+66 - 8 = 58
+Therefore, the answer is 58 (a).
+
+⸻
+
+Q: What is 7 × 8?
+Answer Choices:
+(a) 54
+(b) 56
+(c) 58
+(d) 64
+(e) 48
+A: Multiplying 7 by 8 gives:
+7 × 8 = 56
+Therefore, the answer is 56 (b).
+
+⸻
+
+Q: What is 144 ÷ 12?
+Answer Choices:
+(a) 11
+(b) 10
+(c) 12
+(d) 13
+(e) 14
+A: Divide 144 by 12:
+144 ÷ 12 = 12
+Therefore, the answer is 12 (c).
+
+⸻
+
+Q: What is 15 + 28?
+Answer Choices:
+(a) 43
+(b) 42
+(c) 44
+(d) 41
+(e) 45
+A: Add 15 and 28:
+15 + 28 = 43
+Therefore, the answer is 43 (a).
+
+⸻
+
+Q: What is 63 - 29?
+Answer Choices:
+(a) 32
+(b) 34
+(c) 36
+(d) 33
+(e) 35
+A: Subtract 29 from 63:
+63 - 30 = 33
+33 + 1 = 34
+Therefore, the answer is 34 (b).
+
+⸻
+
+Q: What is 9 × 6?
+Answer Choices:
+(a) 54
+(b) 48
+(c) 52
+(d) 56
+(e) 58
+A: 9 times 6 is:
+9 × 6 = 54
+Therefore, the answer is 54 (a).
+
+⸻
+
+Q: What is 81 ÷ 9?
+Answer Choices:
+(a) 7
+(b) 8
+(c) 9
+(d) 10
+(e) 11
+A: 81 divided by 9 equals:
+81 ÷ 9 = 9
+Therefore, the answer is 9 (c).
+
+⸻
+
+Q: What is 47 + 36?
+Answer Choices:
+(a) 83
+(b) 84
+(c) 81
+(d) 82
+(e) 85
+A: Break it into parts:
+40 + 30 = 70
+7 + 6 = 13
+70 + 13 = 83
+Therefore, the answer is 83 (a).
+
+⸻
+
+Q: What is 100 - 67?
+Answer Choices:
+(a) 33
+(b) 32
+(c) 34
+(d) 35
+(e) 36
+A: Subtracting 67 from 100:
+100 - 67 = 33
+Therefore, the answer is 33 (a).

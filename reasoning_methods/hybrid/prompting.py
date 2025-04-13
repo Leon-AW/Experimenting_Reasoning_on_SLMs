@@ -5,12 +5,18 @@ import os
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
 # Define config values directly in this file
-MAX_NEW_TOKENS = 256
+MAX_NEW_TOKENS = 128
 TEMPERATURE = 0.5
 TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 SEED = 42
+
+# Helper function to find the start of the next question in the generated text
+def find_next_question_marker(text):
+    markers = ["\nQ:", "\nInput:"]
+    positions = [text.find(marker) for marker in markers if text.find(marker) != -1]
+    return min(positions) if positions else -1
 
 def extract_numeric_answer(generated_text):
     """
@@ -218,242 +224,228 @@ def format_question(question_data, dataset_type):
     else:
         raise ValueError(f"Unknown dataset_type: {dataset_type}")
 
+def parse_rationale_only(text: str, dataset_type: str) -> str | None:
+    """
+    Parses the model output to extract only the rationale part,
+    stripping away any leading prompt remnants or trailing answer extractions.
+    Used specifically for cleaning the output of the 'rationalize' function.
+    """
+    rationale = text.strip() # Start with the full generated text
+
+    # Attempt to remove the prompt part if the model included it
+    # This depends on the prompt structure used in 'rationalize'
+    prompt_markers = {
+        'cqa': "\nRationale:",
+        'gsm8k': "\nRationale:",
+        'arithmetic': "\nRationale:",
+    }
+    marker = prompt_markers.get(dataset_type)
+    if marker:
+        marker_pos = rationale.find(marker)
+        if marker_pos != -1:
+            # Take text after the marker
+            rationale = rationale[marker_pos + len(marker):].strip()
+        else:
+            # If marker not found, assume generation started directly with rationale
+            # Check if it starts with typical rationale phrases vs prompt text
+            if rationale.startswith("Q:") or rationale.startswith("Input:"):
+                 # Looks like prompt wasn't stripped, try removing first line? Risky.
+                 pass # Keep as is for now, maybe log a warning if problematic
+
+    # Remove common answer extraction phrases if they appear at the end
+    # Be less aggressive than before, target specific phrases from format_for_finetuning
+    rationale = re.sub(r'\s*Therefore, the answer is.*?\(.*?\)(\.\s*)?$', '', rationale, flags=re.IGNORECASE | re.DOTALL).strip() # CQA format
+    rationale = re.sub(r'\s*The final answer is:.*?$', '', rationale, flags=re.IGNORECASE | re.DOTALL).strip() # GSM8K format
+    # For arithmetic, remove potential scratchpad tags or just the final number
+    rationale = re.sub(r'\n<scratch>.*?</scratch>\n\d+(\.\d+)?$', '', rationale, flags=re.DOTALL).strip()
+    rationale = re.sub(r'\n\d+(\.\d+)?$', '', rationale).strip() # If only number at end
+    rationale = re.sub(r'^<scratch>\s*</scratch>$', '', rationale, flags=re.DOTALL).strip() # Empty scratchpad
+
+    # Return None if rationale is empty after stripping
+    return rationale if rationale else None
+
 def generate_rationale(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
     few_shot_prompt: str,
     question_data: dict,
     dataset_type: str,
-    max_new_tokens: int = 256,
-    temperature: float = 0.0,  # Default to greedy if not specified
-    top_p: float = 0.9,        # Add these parameters
-    top_k: int = 0,
-    do_sample: bool = True
+    max_new_tokens: int = MAX_NEW_TOKENS,
+    temperature: float = TEMPERATURE,
+    top_p: float = TOP_P,
+    top_k: int = TOP_K,
+    do_sample: bool = DO_SAMPLE
 ):
     """
-    Generates rationale and answer for a given question using few-shot prompting.
-
-    Args:
-        model: The language model.
-        tokenizer: The tokenizer.
-        few_shot_prompt: The few-shot prompt string (examples).
-        question_data: Dictionary containing the current question's data.
-        dataset_type: 'cqa', 'arithmetic', or 'gsm8k'.
-        max_new_tokens: Max tokens to generate.
-        temperature: Generation temperature.
-        top_p: Nucleus sampling parameter.
-        top_k: Top-k sampling parameter.
-        do_sample: Whether to use sampling vs greedy decoding.
+    Generates rationale and attempts to parse the answer for a given question.
+    (Signature kept similar to original for compatibility in main.py)
 
     Returns:
         Tuple (rationale, answer) or (None, None) if generation/parsing fails.
     """
-    formatted_question = format_question(question_data, dataset_type)
-    full_prompt = few_shot_prompt + "\n\n" + formatted_question
+    full_prompt = few_shot_prompt + "\n\n" + format_question(question_data, dataset_type)
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
 
-    # Inputs will be placed on the correct device by model.generate
-    inputs = tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=tokenizer.model_max_length - max_new_tokens)
-    # Explicitly move inputs to the model's device to avoid warning
-    inputs = inputs.to(model.device)
-
-    # Configure generation parameters
-    generate_kwargs = {
+    # Adjust sampling parameters based on temperature
+    gen_kwargs = {
         "max_new_tokens": max_new_tokens,
-        "do_sample": do_sample,
-        "temperature": temperature,
-        "top_p": top_p,
-        "top_k": top_k,
+        "pad_token_id": tokenizer.eos_token_id, # Use EOS for padding in open-ended generation
+        "eos_token_id": tokenizer.eos_token_id,
     }
-
-    # Overrides for greedy decoding
-    if temperature == 0.0:
-        generate_kwargs["do_sample"] = False
-
-    # Set seed for reproducibility
-    torch.manual_seed(SEED)
-    
-    try:
-        with torch.no_grad():
-            outputs = model.generate(**inputs, **generate_kwargs)
-
-        # Decode only the generated part
-        generated_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-
-        # For debugging, print first few examples
-        if question_data.get('id', '') in ['00621703', '00621704', '00621705']:  # First few examples
-            print(f"\nGenerated text for question {question_data.get('id', 'unknown')}:")
-            print(generated_text[:300] + "..." if len(generated_text) > 300 else generated_text)
-
-        # Construct the parse input - we need to handle the whole output format
-        parse_input = formatted_question + generated_text
-
-    except Exception as e:
-        print(f"Error during generation: {e}")
-        return None, None
-
-    # Parse the output based on dataset type
-    if dataset_type == 'cqa':
-        # For CQA, use log-likelihood scoring instead of text parsing
-        answer_letter = score_cqa_answers(model, tokenizer, question_data, generated_text)
-        return generated_text, answer_letter  # Return the rationale and the answer letter
-    elif dataset_type == 'arithmetic':
-        # Arithmetic needs special handling as scratchpad IS the rationale
-        # Check for <scratch> tag first
-        scratch_match = re.search(r"<scratch>", generated_text, re.DOTALL)
-        if scratch_match:
-            # Parse using the updated function with extract_numeric_answer
-            parse_input_arith = generated_text[scratch_match.start():]
-            return parse_arithmetic_output(parse_input_arith)
-        else:
-            # If no <scratch> tag found, try to extract just a numeric answer
-            answer = extract_numeric_answer(generated_text)
-            if answer:
-                # No scratchpad but we have an answer
-                print(f"Warning: Arithmetic output missing <scratch> tag but found answer {answer}")
-                return generated_text, answer
-            else:
-                print(f"Warning: Arithmetic output missing <scratch> tag and no answer found: {generated_text}")
-                return None, None
-    elif dataset_type == 'gsm8k':
-        return parse_gsm8k_output(parse_input)
+    current_do_sample = do_sample
+    if temperature > 0.0 and current_do_sample:
+        gen_kwargs.update({
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "do_sample": True,
+        })
     else:
-        return None, None
+        # Use greedy decoding if temp is 0 or do_sample is False
+        gen_kwargs["do_sample"] = False
+        # Optionally set num_beams for greedy/beam search, but simple greedy is default
+        # gen_kwargs["num_beams"] = 1
+
+    with torch.no_grad():
+        outputs = model.generate(**inputs, **gen_kwargs)
+
+    # Decode only the generated part
+    # Handle potential warning about exceeding max length by truncating the input_ids passed to decode
+    output_token_ids = outputs[0][inputs.input_ids.shape[1]:]
+    generated_text = tokenizer.decode(output_token_ids, skip_special_tokens=True).strip()
+
+
+    # --- Answer Parsing ---
+    answer = None
+    rationale = generated_text # Use the full generated text as potential rationale initially
+
+    if dataset_type == 'cqa':
+        # For CQA, use log-likelihood scoring based on the generated rationale text
+        # Pass the *full* generated text to score_cqa_answers, as it includes rationale + answer phrase context
+        # Let score_cqa_answers handle building the appropriate prompt for scoring
+        answer = score_cqa_answers(model, tokenizer, question_data, generated_text)
+
+        # The 'rationale' returned should ideally be just the reasoning steps.
+        # Attempt to parse out the reasoning part before the final answer phrase.
+        parsed_rationale = parse_rationale_only(generated_text, dataset_type)
+        if parsed_rationale:
+             rationale = parsed_rationale
+        # If parsing fails, keep the full generated_text as rationale (better than nothing)
+
+
+    elif dataset_type == 'gsm8k':
+        rationale, answer = parse_gsm8k_output(generated_text) # This function extracts both
+        if rationale is None: rationale = generated_text # Fallback if parsing fails badly
+
+    elif dataset_type == 'arithmetic':
+        rationale, answer = parse_arithmetic_output(generated_text) # Assumes scratchpad is rationale
+        if rationale is None: rationale = generated_text # Fallback
+
+    else:
+        print(f"Warning: Unknown dataset_type '{dataset_type}' for parsing.")
+        # Fallback: return raw generation as rationale, no answer parsed
+        return generated_text, None
+
+    # Ensure rationale is not None before returning
+    if rationale is None:
+        rationale = "" # Return empty string instead of None if parsing removed everything
+
+    return rationale, answer
 
 
 def rationalize(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
-    few_shot_prompt: str,
     question_data: dict,
     correct_answer: str,
     dataset_type: str,
-    max_new_tokens: int = 256,
-    temperature: float = 0.0,  # Default to greedy if not specified
-    top_p: float = 0.9,        # Add these parameters
-    top_k: int = 0,
-    do_sample: bool = True
-):
+    max_new_tokens: int = MAX_NEW_TOKENS,
+    temperature: float = TEMPERATURE,
+    top_p: float = TOP_P,
+    top_k: int = TOP_K,
+    do_sample: bool = DO_SAMPLE
+) -> str | None:
     """
-    Generates a rationale given the question and the correct answer (hint).
-
-    Args:
-        model: The language model.
-        tokenizer: The tokenizer.
-        few_shot_prompt: Few-shot prompt.
-        question_data: Dictionary containing the current question's data.
-        correct_answer: The ground truth answer to provide as a hint.
-        dataset_type: 'cqa', 'arithmetic', or 'gsm8k'.
-        max_new_tokens: Max tokens to generate.
-        temperature: Generation temperature.
-        top_p: Nucleus sampling parameter.
-        top_k: Top-k sampling parameter.
-        do_sample: Whether to use sampling vs greedy decoding.
+    Generates a rationale (rationalization) given the question AND the correct answer.
+    This function focuses on generating the reasoning steps only.
 
     Returns:
-        Tuple (rationale, answer) or (None, None) if generation/parsing fails.
-        The returned answer should match the correct_answer hint.
+        The generated rationale string, or None if generation fails or yields empty rationale.
     """
+    # Format the question part of the prompt
+    formatted_question_part = format_question(question_data, dataset_type)
+    # Remove the trailing 'A:' or 'Target:' added by format_question, as we'll add our own prompt ending
+    if formatted_question_part.endswith("A:"):
+        formatted_question_part = formatted_question_part[:-2].strip()
+    elif formatted_question_part.endswith("Target:"):
+         formatted_question_part = formatted_question_part[:-7].strip()
 
-    # Format the question part first
-    formatted_question_base = format_question(question_data, dataset_type)
 
-    # Inject the hint based on dataset type (inspired by Fig 2 for CQA)
+    # Construct the specific rationalization prompt asking for reasoning
+    rationalization_prompt_suffix = ""
     if dataset_type == 'cqa':
-        # Find the correct choice text based on the answer label (e.g., 'b')
-        correct_choice_text = ""
+        # Find the text corresponding to the correct answer label
+        correct_answer_text = ""
         for label, text in zip(question_data['choices']['label'], question_data['choices']['text']):
-            if label.lower() == correct_answer.lower():
-                correct_choice_text = text
+            if str(label).lower() == str(correct_answer).lower():
+                correct_answer_text = text
                 break
-        # Inject hint like in Fig 2. Modify the end of formatted_question
-        if correct_choice_text and formatted_question_base.endswith("\nA:"):
-            hint = f" (Hint: The answer is {correct_choice_text} ({correct_answer}))"
-            # Insert hint before the final 'A:'
-            prompt_with_hint = formatted_question_base[:-len("\nA:")] + hint + "\nA:"
-        else:
-            print("Warning: Could not format CQA hint properly.")
-            prompt_with_hint = formatted_question_base # Fallback to no hint
-    elif dataset_type == 'arithmetic':
-        # For arithmetic, the hint is providing the answer after "Target:"
-        if formatted_question_base.endswith("\nTarget:"):
-            # Provide answer directly + prompt to start scratchpad
-            prompt_with_hint = formatted_question_base + f" {correct_answer}\n<scratch>" 
-            # The prompt becomes "Input: ... Target: ANSWER\n<scratch>" -> model generates the rest of "<scratch>...</scratch>\nANSWER"
-        else:
-            prompt_with_hint = formatted_question_base # Fallback
-    elif dataset_type == 'gsm8k':
-        # Similar to CQA, add hint before the 'A:'
-        if formatted_question_base.endswith("\nA:"):
-            hint = f" (Hint: The final answer is {correct_answer})"
-            prompt_with_hint = formatted_question_base[:-len("\nA:")] + hint + "\nA:"
-        else:
-            prompt_with_hint = formatted_question_base
+        if not correct_answer_text:
+             print(f"Warning: Could not find text for correct answer {correct_answer} in CQA.")
+             return None
+
+        rationalization_prompt_suffix = (
+            f"{formatted_question_part.strip()}\n"
+            f"Given that the correct answer is {correct_answer_text} ({correct_answer}), provide a concise, coherent, and step-by-step explanation that logically leads to this answer. "
+            f"List your key reasoning steps in clear, numbered points, and avoid any repetition or irrelevant details.\n"
+            f"Rationale:"
+        )
+
+    elif dataset_type in ['gsm8k', 'arithmetic']:
+        rationalization_prompt_suffix = (
+            f"{formatted_question_part.strip()}\n"
+            f"Given that the correct answer is {correct_answer}, provide a concise and clear step-by-step explanation in 3-5 steps that leads to this answer. "
+            f"Ensure the explanation is well-structured and does not contain any repetitive content.\n"
+            f"Rationale:"
+        )
     else:
-        prompt_with_hint = formatted_question_base # Fallback
+        raise ValueError(f"Rationalization not implemented for dataset_type: {dataset_type}")
 
-    full_prompt = few_shot_prompt + "\n\n" + prompt_with_hint
+    # Combine few-shot examples, the formatted question, and the rationalization instruction
+    full_prompt = formatted_question_part + rationalization_prompt_suffix
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
 
-    # Inputs will be placed on the correct device by model.generate
-    inputs = tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=tokenizer.model_max_length - max_new_tokens)
-    # Explicitly move inputs to the model's device to avoid warning
-    inputs = inputs.to(model.device)
-
-    # Configure generation parameters
-    generate_kwargs = {
+    # Adjust sampling parameters (same logic as generate_rationale)
+    gen_kwargs = {
         "max_new_tokens": max_new_tokens,
-        "do_sample": do_sample,
-        "temperature": temperature,
-        "top_p": top_p,
-        "top_k": top_k,
+        "pad_token_id": tokenizer.eos_token_id,
+        "eos_token_id": tokenizer.eos_token_id, # Stop generation naturally or when max tokens hit
     }
-
-    # Overrides for greedy decoding
-    if temperature == 0.0:
-        generate_kwargs["do_sample"] = False
-
-    # Set seed for reproducibility
-    torch.manual_seed(SEED)
-    
-    try:
-        with torch.no_grad():
-            outputs = model.generate(**inputs, **generate_kwargs)
-        generated_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
-        
-        # For debugging, print first few examples of rationalization
-        if question_data.get('id', '') in ['00621703', '00621704', '00621705']:
-            print(f"\nRationalized text for question {question_data.get('id', 'unknown')}:")
-            print(generated_text[:300] + "..." if len(generated_text) > 300 else generated_text)
-
-    except Exception as e:
-        print(f"Error during rationalization generation: {e}")
-        return None, None
-
-    # For CQA, just return the generated text and the correct answer since we already know it
-    if dataset_type == 'cqa':
-        return generated_text, correct_answer.lower()
-    # For arithmetic, extract the scratch tag and use extract_numeric_answer
-    elif dataset_type == 'arithmetic':
-        scratch_match = re.search(r"<scratch>", generated_text, re.DOTALL)
-        if scratch_match:
-            # Parse using the updated function with extract_numeric_answer
-            parse_input_arith = generated_text[scratch_match.start():]
-            return parse_arithmetic_output(parse_input_arith)
-        else:
-            # If no scratch tag, try to extract just the answer
-            answer = extract_numeric_answer(generated_text)
-            if answer:
-                print(f"Warning: Rationalized Arithmetic output missing <scratch> tag but found answer {answer}")
-                return generated_text, answer
-            else:
-                print(f"Warning: Rationalized Arithmetic output missing <scratch> tag and no answer found")
-                return None, None
-    # For GSM8K, use the extract_numeric_answer function
-    elif dataset_type == 'gsm8k':
-        answer = extract_numeric_answer(generated_text)
-        if answer is not None:
-            return generated_text, answer
-        else:
-            print(f"Warning: Could not extract numeric answer from GSM8K rationalization")
-            return None, None
+    current_do_sample = do_sample
+    if temperature > 0.0 and current_do_sample:
+        gen_kwargs.update({
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "do_sample": True,
+        })
     else:
-        return None, None 
+        gen_kwargs["do_sample"] = False
+
+    with torch.no_grad():
+        outputs = model.generate(**inputs, **gen_kwargs)
+
+    # Decode only the generated part (the rationalization)
+    output_token_ids = outputs[0][inputs.input_ids.shape[1]:]
+    generated_text = tokenizer.decode(output_token_ids, skip_special_tokens=True).strip()
+
+
+    # Parse/clean the generated text to get just the rationale using the new helper
+    parsed_rationale = parse_rationale_only(generated_text, dataset_type)
+
+    # We don't need to parse an 'answer' here, just return the reasoning
+    # The return type is str | None (parsed_rationale can be None if empty after cleaning)
+    return parsed_rationale
+
+# Ensure parse_gsm8k_output and parse_arithmetic_output are defined above or imported
+# Ensure score_cqa_answers is defined above or imported 

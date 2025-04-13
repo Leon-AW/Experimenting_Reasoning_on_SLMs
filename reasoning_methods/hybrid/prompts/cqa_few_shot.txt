@@ -1,95 +1,99 @@
-import os
-
-# Determine the directory of the current script
-script_dir = os.path.dirname(os.path.abspath(__file__))
-PROMPT_DIR = os.path.join(script_dir, "prompts") # Look for prompts within the script's directory
-
-Q: What might a person hide in their hand?
+Q: What organ in the human body is primarily responsible for pumping blood?
 Answer Choices:
-(a) watch
-(b) coin
-(c) statue
-(d) refrigerator
-(e) car
-A: The question asks what a person might hide in their hand. Hands are relatively small and can conceal small objects. Among the choices, a watch could be held but usually worn, a statue, refrigerator, and car are too large. A coin is small and commonly held or hidden in a hand. Therefore, the answer is coin (b).
+(a) liver
+(b) brain
+(c) heart
+(d) kidney
+(e) lung
+A: The organ responsible for pumping blood throughout the body is the heart. It functions as a muscular pump that circulates blood, delivering oxygen and nutrients. The other options serve different roles: the liver processes toxins, the brain controls bodily functions, the kidneys filter blood, and the lungs are responsible for gas exchange.
+Therefore, the answer is heart (c).
 
-Q: Where would you typically find a stage?
+Q: What is the chemical symbol for water?
 Answer Choices:
-(a) kitchen
-(b) theater
-(c) closet
-(d) pool
-(e) street
-A: The question asks for a typical location of a stage. A stage is a raised platform used for performances. Kitchens, closets, pools, and streets are generally not locations for stages. Theaters are specifically designed venues that contain stages for performances like plays or concerts. Therefore, the answer is theater (b).
+(a) CO₂
+(b) NaCl
+(c) H₂O
+(d) O₂
+(e) CH₄
+A: Water is composed of two hydrogen atoms and one oxygen atom. The chemical formula for this composition is H₂O. CO₂ is carbon dioxide, NaCl is salt, O₂ is oxygen gas, and CH₄ is methane.
+Therefore, the answer is H₂O (c).
 
-Q: If you want to keep food cold, where should you put it?
+Q: Which of these shapes has three sides?
 Answer Choices:
-(a) oven
-(b) pantry
-(c) refrigerator
-(d) sink
-(e) cupboard
-A: The question is about storing food to keep it cold. An oven is used for heating, a pantry and cupboard are for storing dry goods at room temperature, and a sink is for washing. A refrigerator is an appliance specifically designed to keep food cold. Therefore, the answer is refrigerator (c).
+(a) square
+(b) rectangle
+(c) triangle
+(d) circle
+(e) pentagon
+A: A triangle is a polygon with exactly three sides. A square and rectangle each have four sides, a circle has no sides, and a pentagon has five sides.
+Therefore, the answer is triangle (c).
 
-Q: What activity involves hitting a ball over a net?
+Q: Which planet is known as the Red Planet?
 Answer Choices:
-(a) swimming
-(b) running
-(c) reading
-(d) tennis
-(e) sleeping
-A: The question asks for an activity involving hitting a ball over a net. Swimming, running, reading, and sleeping do not involve this action. Tennis is a sport where players use rackets to hit a ball back and forth over a net. Therefore, the answer is tennis (d).
+(a) Venus
+(b) Earth
+(c) Jupiter
+(d) Mars
+(e) Saturn
+A: Mars is known as the Red Planet due to its reddish appearance, which comes from iron oxide (rust) on its surface. The other planets do not have this characteristic.
+Therefore, the answer is Mars (d).
 
-Q: What object is used to unlock a door?
+Q: In programming, what does HTML primarily define?
 Answer Choices:
-(a) key
-(b) hammer
-(c) book
-(d) pillow
-(e) plate
-A: The question asks what is used to unlock a door. A hammer is for hitting, a book for reading, a pillow for sleeping, and a plate for eating. A key is specifically designed to fit into a lock mechanism and unlock a door. Therefore, the answer is key (a).
+(a) the logic of the program
+(b) the behavior of dynamic elements
+(c) the structure of a webpage
+(d) the styling of elements
+(e) the backend database
+A: HTML (HyperText Markup Language) is used to define the structure and content of webpages. It lays out headings, paragraphs, lists, links, etc. Styling is done with CSS, and logic with JavaScript.
+Therefore, the answer is the structure of a webpage (c).
 
-Q: What is the primary purpose of sunglasses?
+Q: What is the primary gas found in the Earth's atmosphere?
 Answer Choices:
-(a) improve hearing
-(b) keep warm
-(c) protect eyes from sun
-(d) clean teeth
-(e) write notes
-A: The question asks for the main reason people wear sunglasses. Sunglasses are worn on the face, covering the eyes. Their dark lenses reduce the amount of sunlight reaching the eyes. Improving hearing, keeping warm, cleaning teeth, or writing notes are not functions of sunglasses. Therefore, the answer is protect eyes from sun (c).
+(a) oxygen
+(b) carbon dioxide
+(c) helium
+(d) nitrogen
+(e) hydrogen
+A: About 78% of Earth's atmosphere is composed of nitrogen. Oxygen makes up around 21%, and the rest includes trace gases like argon, CO₂, and others.
+Therefore, the answer is nitrogen (d).
 
-Q: What kind of animal typically lives in a stable?
+Q: Which of the following animals is a mammal?
 Answer Choices:
-(a) fish
-(b) bird
-(c) horse
+(a) frog
+(b) eagle
+(c) dolphin
 (d) snake
-(e) insect
-A: The question asks what animal lives in a stable. A stable is a building specifically designed for housing livestock, particularly horses. Fish live in water, birds often in nests or cages, snakes in various environments, and insects are widespread. Horses are commonly kept in stables. Therefore, the answer is horse (c).
+(e) salmon
+A: Dolphins are warm-blooded, give birth to live young, and nurse them with milk—all characteristics of mammals. Frogs are amphibians, eagles are birds, snakes are reptiles, and salmon are fish.
+Therefore, the answer is dolphin (c).
 
-Q: What do you use to write on a blackboard?
+Q: What historical event began in 1939 and involved many nations?
 Answer Choices:
-(a) pen
-(b) crayon
-(c) chalk
-(d) marker
-(e) paint
-A: The question asks what is used for writing on a blackboard. Blackboards have a dark, rough surface. Pens, crayons, markers, and paint are not typically used on blackboards and may not work well or be erasable. Chalk is specifically designed for writing on blackboards and is easily erasable. Therefore, the answer is chalk (c).
+(a) World War I
+(b) The Cold War
+(c) World War II
+(d) The Industrial Revolution
+(e) The Great Depression
+A: World War II began in 1939 with the invasion of Poland by Germany, leading to a global conflict involving many countries. World War I began in 1914, the Cold War started post-1945, the Industrial Revolution began in the 18th century, and the Great Depression started in 1929.
+Therefore, the answer is World War II (c).
 
-Q: If you are very tired, what are you likely to do?
+Q: In mathematics, what is the value of π (pi) approximately?
 Answer Choices:
-(a) run a race
-(b) climb a mountain
-(c) go swimming
-(d) go to sleep
-(e) play soccer
-A: The question asks what a very tired person is likely to do. Running, climbing, swimming, and playing soccer are all physically demanding activities that require energy. When very tired, the body needs rest. Going to sleep is the natural way to recover from tiredness. Therefore, the answer is go to sleep (d).
+(a) 2.14
+(b) 3.14
+(c) 1.41
+(d) 4.13
+(e) 0.314
+A: Pi (π) represents the ratio of a circle’s circumference to its diameter and is approximately equal to 3.14.
+Therefore, the answer is 3.14 (b).
 
-Q: What is a common breakfast food made from grain?
+Q: Which part of the computer is considered the "brain"?
 Answer Choices:
-(a) steak
-(b) salad
-(c) cereal
-(d) ice cream
-(e) soup
-A: The question asks for a common breakfast food made from grain. Steak is meat, salad is usually vegetables, ice cream is a frozen dessert, and soup is typically savory liquid. Cereal is a widely consumed breakfast food explicitly made from processed grains like corn, wheat, oats, or rice. Therefore, the answer is cereal (c). 
+(a) hard drive
+(b) RAM
+(c) motherboard
+(d) CPU
+(e) monitor
+A: The CPU (Central Processing Unit) performs most of the processing inside a computer and is often referred to as its "brain." The other components support different functions: storage, memory, communication, or display.
+Therefore, the answer is CPU (d).

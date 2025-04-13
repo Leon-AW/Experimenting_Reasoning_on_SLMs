@@ -23,7 +23,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Define generation parameters (copied from prompting/config.py)
-MAX_NEW_TOKENS = 256
+MAX_NEW_TOKENS = 128
 TEMPERATURE = 0.5
 TOP_P = 0.9
 TOP_K = 0
@@ -38,7 +38,7 @@ from prepare_datasets import load_commonsense_qa, load_gsm8k, generate_arithmeti
 # Model Configuration
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B" # Or your 1B Llama 3.2 path
 # BASE_MODEL_ID = "path/to/your/llama3.2-1b" # Example for local model
-ADAPTER_SAVE_DIR_BASE = "./star_adapters"
+ADAPTER_SAVE_DIR_BASE = "reasoning_methods/hybrid/star_adapters"
 
 # Dataset Configuration
 DATASET_TYPE = 'cqa' # Choose 'cqa', 'gsm8k', or 'arithmetic'
@@ -58,7 +58,7 @@ FEW_SHOT_PROMPTS = {
 
 # STaR Loop Configuration
 NUM_STAR_ITERATIONS = 5 # Number of STaR iterations
-OUTPUT_DIR_BASE = "./star_output" # For trainer logs/checkpoints within an iter
+OUTPUT_DIR_BASE = "reasoning_methods/hybrid/star_output" # For trainer logs/checkpoints within an iter
 
 # Fine-Tuning Configuration (using SFTTrainer)
 INITIAL_TRAIN_STEPS = 40 # Start with 40 steps as per paper
@@ -152,7 +152,6 @@ def load_model_and_tokenizer(model_id_or_path):
 
     # Handle padding token for Llama models
     if tokenizer.pad_token is None:
-        print("Setting pad token to eos token")
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
 
@@ -211,6 +210,9 @@ if __name__ == "__main__":
     # Initialize path for generation model for iteration 1
     current_model_path_for_generation = BASE_MODEL_ID
 
+    # Define a progress bar format that displays elapsed time and estimated remaining time
+    progress_bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} [elapsed: {elapsed}, remaining: {remaining}]"
+
     for i in range(NUM_STAR_ITERATIONS):
         iteration = i + 1
         print(f"\n--- STaR Iteration {iteration}/{NUM_STAR_ITERATIONS} ---")
@@ -229,8 +231,9 @@ if __name__ == "__main__":
         gen_model, gen_tokenizer = load_model_and_tokenizer(current_model_path_for_generation)
         gen_model.eval()
 
-        successful_rationales_data = []
-        failed_indices = [] # Store indices of problems the model failed
+        # successful_rationales_data = [] # Rename this list
+        finetuning_data = [] # List to store data formatted for fine-tuning
+        failed_indices = [] # Store indices of problems the model failed initially
 
         # Select data for this iteration (especially for large datasets like arithmetic)
         if DATASET_TYPE == 'arithmetic':
@@ -239,12 +242,13 @@ if __name__ == "__main__":
             iteration_data = train_data # Use full dataset for CQA/GSM8K
 
         print(f"Generating rationales for {len(iteration_data)} examples...")
-        for idx, example in enumerate(tqdm(iteration_data, desc=f"Iteration {iteration} Generation", disable=args.debug)):
+        for idx, example in enumerate(tqdm(iteration_data, desc=f"Iteration {iteration} Generation", bar_format=progress_bar_format)):
             ground_truth = get_ground_truth(example, DATASET_TYPE)
             if ground_truth is None:
                 print(f"Warning: Skipping example {idx} due to missing ground truth.")
                 continue
 
+            # Step 1: Generate initial rationale without the answer
             r_hat, y_hat = generate_rationale(
                 model=gen_model,
                 tokenizer=gen_tokenizer,
@@ -258,150 +262,175 @@ if __name__ == "__main__":
                 do_sample=DO_SAMPLE
             )
 
-            # Compare case-insensitively for CQA
-            if DATASET_TYPE == 'cqa':
-                is_correct = r_hat is not None and y_hat is not None and str(y_hat).lower() == str(ground_truth).lower()
-            else:
-                is_correct = r_hat is not None and y_hat is not None and str(y_hat) == str(ground_truth)
+            if r_hat is None or y_hat is None:
+                print(f"Warning: Skipping example {idx} because initial rationale generation failed.")
+                failed_indices.append(idx)
+                continue
 
-            if args.debug:
-                print(f"\n--- Gen Debug Example {idx} ---")
-                print(f"Ground Truth: {ground_truth}")
-                print(f"Generated Rationale: {r_hat}")
-                print(f"Generated Answer: {y_hat}")
-                print(f"Correct: {is_correct}")
-                print("-------------------------")
+            # Normalize answers for comparison
+            y_hat_norm = str(y_hat).strip().lower()
+            y_norm = str(ground_truth).strip().lower()
 
-            if is_correct:
-                try:
-                    formatted_text = format_for_finetuning(example, r_hat, y_hat, DATASET_TYPE)
-                    successful_rationales_data.append({"text": formatted_text})
-                except Exception as e:
-                    print(f"Error formatting successful rationale {idx}: {e}")
-            else:
-                failed_indices.append(idx) # Store original index if using subset, or direct index otherwise
+            # For numeric datasets, handle potential floating point differences if needed
+            # Basic check for now, can be made more robust (e.g., float comparison)
+            if DATASET_TYPE in ['gsm8k', 'arithmetic']:
+                 try:
+                     # Simple normalization: treat "123.0" and "123" as same
+                     y_hat_norm = str(int(float(y_hat_norm)))
+                     y_norm = str(int(float(y_norm)))
+                 except ValueError:
+                     # If conversion fails, compare as strings
+                     pass
 
-        print(f"Generated {len(successful_rationales_data)} successful rationales.")
+            # Step 2 & 3: Compare predicted answer with ground truth
+            is_correct = (y_hat_norm == y_norm)
 
-        # --- Rationalization Phase ---
-        print(f"Attempting rationalization for {len(failed_indices)} failed examples...")
-        successful_rationalizations_data = []
-
-        # Need to get the actual failed examples based on indices
-        failed_examples = [iteration_data[i] for i in failed_indices]
-
-        for example_idx, example in enumerate(tqdm(failed_examples, desc=f"Iteration {iteration} Rationalization", disable=args.debug)):
-            ground_truth = get_ground_truth(example, DATASET_TYPE)
-            if ground_truth is None: continue # Should not happen if check passed before
-
-            r_rat, y_rat = rationalize(
-                model=gen_model,
-                tokenizer=gen_tokenizer,
-                few_shot_prompt=few_shot_prompt,
-                question_data=example,
-                correct_answer=ground_truth,
-                dataset_type=DATASET_TYPE,
-                max_new_tokens=MAX_NEW_TOKENS,
-                temperature=TEMPERATURE,
-                top_p=TOP_P,
-                top_k=TOP_K,
-                do_sample=DO_SAMPLE
-            )
-
-            # Compare case-insensitively for CQA
-            if DATASET_TYPE == 'cqa':
-                rationalization_produces_correct_answer = r_rat is not None and y_rat is not None and str(y_rat).lower() == str(ground_truth).lower()
-            else:
-                rationalization_produces_correct_answer = r_rat is not None and y_rat is not None and str(y_rat) == str(ground_truth)
-
-            if args.debug:
-                 print(f"\n--- Rat Debug Example {example_idx} (Original Index: {failed_indices[example_idx]}) ---")
-                 print(f"Ground Truth (Hint): {ground_truth}")
-                 print(f"Rationalized Rationale: {r_rat}")
-                 print(f"Rationalized Answer: {y_rat}")
-                 print(f"Produced Correct Answer: {rationalization_produces_correct_answer}")
+            if args.debug and idx < 25: # Print debug info for first few examples if debug enabled
+                 print(f"\n--- Gen Debug Example {idx} ---")
+                 print(f"Ground Truth: {ground_truth}")
+                 print(f"Generated Rationale: {r_hat}")
+                 print(f"Generated Answer: {y_hat}")
+                 print(f"Correct: {is_correct}")
                  print("-------------------------")
 
-            # Check if rationalization produced the correct answer (Algorithm line 6)
-            if rationalization_produces_correct_answer:
-                 try:
-                    formatted_text = format_for_finetuning(example, r_rat, ground_truth, DATASET_TYPE) # Use r_rat!
-                    successful_rationalizations_data.append({"text": formatted_text})
-                 except Exception as e:
-                    print(f"Error formatting successful rationalization {example_idx}: {e}")
+
+            if is_correct:
+                # Step 4 (Correct): Use the generated rationale
+                rationale_for_finetuning = r_hat
+                if args.debug and idx < 25:
+                     print(f"Debug: Example {idx} - Correct. Using generated rationale.")
+            else:
+                # Step 5 (Incorrect): Generate rationalization using the correct answer
+                failed_indices.append(idx)
+                if args.debug and idx < 25:
+                     print(f"Debug: Example {idx} - Incorrect (Predicted: {y_hat}, GT: {ground_truth}). Generating rationalization...")
+
+                # Call rationalize function
+                r_star = rationalize(
+                    model=gen_model,
+                    tokenizer=gen_tokenizer,
+                    question_data=example,
+                    correct_answer=ground_truth, # Provide the ground truth answer!
+                    dataset_type=DATASET_TYPE,
+                    max_new_tokens=MAX_NEW_TOKENS,
+                    temperature=TEMPERATURE,
+                    top_p=TOP_P,
+                    top_k=TOP_K,
+                    do_sample=DO_SAMPLE
+                )
+
+                if r_star:
+                    rationale_for_finetuning = r_star
+                    if args.debug and idx < 25:
+                         print(f"    Rationalization Details:")
+                         print(f"      Question: {example.get('question', 'N/A')[:80]}...")
+                         print(f"      Predicted Answer (Incorrect): {y_hat}")
+                         print(f"      Gold Answer: {ground_truth}")
+                         print(f"    Debug: Example {idx} - Rationalization generated: {r_star}...")
+                else:
+                    print(f"Warning: Skipping example {idx} because rationalization failed.")
+                    if args.debug and idx < 25:
+                         print(f"    Debug: Example {idx} - Rationalization FAILED.")
+                    continue # Skip this example if rationalization fails
+
+            # Format the data for fine-tuning using the chosen rationale and ALWAYS the ground truth answer
+            formatted_instance = format_for_finetuning(
+                question_data=example,
+                rationale=rationale_for_finetuning,
+                answer=ground_truth, # Use ground_truth here
+                dataset_type=DATASET_TYPE
+            )
+
+            if formatted_instance:
+                 # successful_rationales_data.append({"text": formatted_instance}) # Old way
+                 finetuning_data.append({"text": formatted_instance})
+            else:
+                 print(f"Warning: Skipping example {idx} due to formatting error.")
 
 
-        print(f"Generated {len(successful_rationalizations_data)} successful rationalizations.")
-
-        # Clean up generation model from memory
+        # --- Clean up Generation Model ---
         del gen_model, gen_tokenizer
         gc.collect()
         torch.cuda.empty_cache()
 
-        # --- Prepare Fine-tuning Data ---
-        fine_tuning_data = successful_rationales_data + successful_rationalizations_data
-        if not fine_tuning_data:
-            print("No successful rationales or rationalizations generated in this iteration. Stopping STaR.")
-            break
-
-        print(f"Total examples for fine-tuning in iteration {iteration}: {len(fine_tuning_data)}")
-        # Check a few examples
-        print("Sample fine-tuning data point:")
-        print(random.choice(fine_tuning_data)['text'])
-
-        finetune_dataset = Dataset.from_list(fine_tuning_data)
 
         # --- Fine-tuning Phase ---
-        print("Starting fine-tuning...")
-        # Load BASE model for fine-tuning (STaR Algorithm Line 7)
-        print(f"Loading BASE model for fine-tuning: {BASE_MODEL_ID}")
-        train_model, train_tokenizer = load_model_and_tokenizer(BASE_MODEL_ID)
+        if not finetuning_data:
+            print("No successful rationales generated in this iteration. Skipping fine-tuning.")
+            # Decide how to proceed: continue to next iter? Stop? Use previous model?
+            # For now, we'll just continue, using the same model for the next gen phase
+            print(f"Using model from previous step for next generation: {current_model_path_for_generation}")
+            continue # Skip finetuning if no data
 
-        # Configure training arguments
+        print(f"Fine-tuning on {len(finetuning_data)} generated examples...")
+
+        # Prepare dataset for SFTTrainer
+        # finetuning_dataset = Dataset.from_dict({"text": [item['text'] for item in successful_rationales_data]}) # Old
+        finetuning_dataset = Dataset.from_dict({"text": [item['text'] for item in finetuning_data]})
+
+
+        # Load model for fine-tuning (start from the BASE model in the first iter,
+        # or the previously fine-tuned model in subsequent iters)
+        print(f"Loading model for fine-tuning: {current_model_path}")
+        ft_model, ft_tokenizer = load_model_and_tokenizer(current_model_path)
+
+        # Calculate training steps based on dataset size and epoch config
+        # total_train_batch_size = PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * torch.cuda.device_count()
+        # steps_per_epoch = len(finetuning_dataset) // total_train_batch_size
+        # max_steps_for_iter = int(NUM_EPOCHS_PER_ITER * steps_per_epoch)
+        # Use max_steps based on dataset size or fixed steps, whichever is smaller? Paper uses fixed steps.
+        max_steps_for_iter = num_train_steps
+        print(f"Calculated max_steps for this iteration: {max_steps_for_iter}")
+
+
         training_args = TrainingArguments(
             output_dir=output_dir,
+            num_train_epochs=NUM_EPOCHS_PER_ITER, # Train for a fixed number of epochs on the generated data
+            # max_steps=max_steps_for_iter, # Alternative: Train for a fixed number of steps
             per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
             gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
             learning_rate=LEARNING_RATE,
+            logging_dir=f"{output_dir}/logs",
             logging_steps=LOGGING_STEPS,
-            num_train_epochs=NUM_EPOCHS_PER_ITER,
-            save_strategy="no", # Don't save checkpoints during training, save full model after
-            report_to="none",
-            bf16=True, # Use bf16 if available for performance
-            gradient_checkpointing=True, # Enable gradient checkpointing to save memory
-            gradient_checkpointing_kwargs={'use_reentrant': False}, # Recommended setting
+            save_strategy="steps", # Save checkpoints periodically if needed
+            save_steps=max_steps_for_iter // 2 if max_steps_for_iter > 10 else max_steps_for_iter, # Save mid-epoch? Or just at end?
+            save_total_limit=1, # Keep only the last checkpoint
+            report_to="none", # Disable wandb/tensorboard unless configured
+            fp16=False, # Use BF16 if available via torch_dtype in model loading
+            bf16=torch.cuda.is_bf16_supported(),
         )
 
-        # Use SFTTrainer for simplicity with text formatting
         trainer = SFTTrainer(
-            model=train_model,
-            train_dataset=finetune_dataset,
-            dataset_text_field="text",
+            model=ft_model,
+            tokenizer=ft_tokenizer,
+            train_dataset=finetuning_dataset,
+            dataset_text_field="text", # Specify the column containing the formatted text
             max_seq_length=MAX_SEQ_LENGTH,
-            tokenizer=train_tokenizer,
             args=training_args,
+            # No PEFT config needed for full fine-tuning
         )
 
-        print(f"Training model...")
+        print("Starting fine-tuning...")
         trainer.train()
+        print("Fine-tuning finished.")
 
-        # Save the fully fine-tuned model
-        print(f"Saving fine-tuned model to {output_dir}")
-        trainer.save_model(output_dir) # Saves the full model
-        train_tokenizer.save_pretrained(output_dir) # Save tokenizer with the model
+        # Save the fine-tuned model (full model, not adapter)
+        # trainer.save_model(adapter_save_dir) # This saves the full model when no PEFT is used
+        ft_model.save_pretrained(adapter_save_dir) # Use standard save_pretrained
+        ft_tokenizer.save_pretrained(adapter_save_dir)
+        print(f"Fine-tuned model saved to {adapter_save_dir}")
 
-        # Update path for the *next* iteration's generation model
-        current_model_path_for_generation = output_dir # This now correctly points to the model trained in *this* iteration
+        # --- Update for next iteration ---
+        current_model_path = adapter_save_dir # The path now points to the newly trained model
+        current_model_path_for_generation = adapter_save_dir # Use the newly trained model for the next generation phase
+        num_train_steps = int(num_train_steps * STEP_INCREASE_FACTOR) # Increase steps for next iter
 
-        # Clean up training model from memory
-        del train_model, train_tokenizer, trainer, finetune_dataset
+        # --- Clean up Fine-tuning Model ---
+        del ft_model, ft_tokenizer, trainer
         gc.collect()
         torch.cuda.empty_cache()
-        # num_train_steps = int(INITIAL_TRAIN_STEPS * (STEP_INCREASE_FACTOR**iteration)) # Update steps for next iter based on fixed increase
 
-
-    print("\n--- STaR Process Finished ---")
-    print(f"Final model saved at: {current_model_path_for_generation}")
+    print("\n--- STaR Process Completed ---")
 
     # --- Final Evaluation ---
     # Load the final model (current_model_path_for_generation)
@@ -418,7 +447,7 @@ if __name__ == "__main__":
         # Add evaluation loop here using generate_rationale (without filtering/rationalization)
         # Similar to the generation loop inside STaR, but on eval_data
         print(f"Evaluating on {len(eval_data)} examples...")
-        for example in tqdm(eval_data, desc="Final Evaluation", disable=args.debug):
+        for example in tqdm(eval_data, desc="Final Evaluation", bar_format=progress_bar_format):
             ground_truth = get_ground_truth(example, DATASET_TYPE)
             if ground_truth is None: continue
 
@@ -463,4 +492,4 @@ if __name__ == "__main__":
         gc.collect()
         torch.cuda.empty_cache()
     else:
-        print("No evaluation data available for this dataset type.")
+        print("No evaluation data available for this dataset type.")checkpoint
