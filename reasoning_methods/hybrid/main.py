@@ -369,10 +369,9 @@ if __name__ == "__main__":
         finetuning_dataset = Dataset.from_dict({"text": [item['text'] for item in finetuning_data]})
 
 
-        # Load model for fine-tuning (start from the BASE model in the first iter,
-        # or the previously fine-tuned model in subsequent iters)
-        print(f"Loading model for fine-tuning: {current_model_path}")
-        ft_model, ft_tokenizer = load_model_and_tokenizer(current_model_path)
+        # Load model for fine-tuning: Always start from the original BASE_MODEL_ID as per STaR paper.
+        print(f"Loading model for fine-tuning: {BASE_MODEL_ID}")
+        ft_model, ft_tokenizer = load_model_and_tokenizer(BASE_MODEL_ID)
 
         # Calculate training steps based on dataset size and epoch config
         # total_train_batch_size = PER_DEVICE_TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS * torch.cuda.device_count()
@@ -385,8 +384,8 @@ if __name__ == "__main__":
 
         training_args = TrainingArguments(
             output_dir=output_dir,
-            num_train_epochs=NUM_EPOCHS_PER_ITER, # Train for a fixed number of epochs on the generated data
-            # max_steps=max_steps_for_iter, # Alternative: Train for a fixed number of steps
+            # num_train_epochs=NUM_EPOCHS_PER_ITER, # Train for a fixed number of epochs on the generated data
+            max_steps=max_steps_for_iter, # Train for a fixed number of steps as per STaR paper
             per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
             gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
             learning_rate=LEARNING_RATE,
@@ -421,7 +420,7 @@ if __name__ == "__main__":
         print(f"Fine-tuned model saved to {adapter_save_dir}")
 
         # --- Update for next iteration ---
-        current_model_path = adapter_save_dir # The path now points to the newly trained model
+        # current_model_path = adapter_save_dir # This variable is no longer needed as FT always starts from BASE_MODEL_ID
         current_model_path_for_generation = adapter_save_dir # Use the newly trained model for the next generation phase
         num_train_steps = int(num_train_steps * STEP_INCREASE_FACTOR) # Increase steps for next iter
 
@@ -492,4 +491,4 @@ if __name__ == "__main__":
         gc.collect()
         torch.cuda.empty_cache()
     else:
-        print("No evaluation data available for this dataset type.")checkpoint
+        print("No evaluation data available for this dataset type.")
