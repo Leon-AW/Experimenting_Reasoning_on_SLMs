@@ -23,15 +23,25 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Define generation parameters (copied from prompting/config.py)
-MAX_NEW_TOKENS = 128
-TEMPERATURE = 0.5
-TOP_P = 0.9
-TOP_K = 0
-DO_SAMPLE = True
+# MAX_NEW_TOKENS = 128
+# TEMPERATURE = 0.5
+# TOP_P = 0.9
+# TOP_K = 0
+# DO_SAMPLE = True
 SEED = 42
 
 # Assuming prompting.py and prepare_datasets.py are in the same directory
-from prompting import generate_rationale, rationalize, format_question
+from prompting import (
+    generate_rationale, 
+    rationalize, 
+    format_question, 
+    TEMPERATURE, 
+    TOP_P, 
+    TOP_K, 
+    DO_SAMPLE, 
+    MAX_NEW_TOKENS,
+    REPETITION_PENALTY
+)
 from prepare_datasets import load_commonsense_qa, load_gsm8k, generate_arithmetic_dataset
 
 # --- Configuration ---
@@ -162,12 +172,15 @@ def load_model_and_tokenizer(model_id_or_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the STaR reasoning process.")
     parser.add_argument("--debug", action="store_true", help="Enable debug printing for generation and rationalization steps.")
+    parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of samples to use for training (useful for testing).")
     args = parser.parse_args()
 
     print(f"Starting STaR process for dataset: {DATASET_TYPE}")
     print(f"Base model: {BASE_MODEL_ID}")
     if args.debug:
         print("DEBUG mode enabled.")
+    if args.max_samples is not None:
+        print(f"Using at most {args.max_samples} samples.")
 
     # --- Initial Setup ---
     os.makedirs(OUTPUT_DIR_BASE, exist_ok=True)
@@ -221,6 +234,12 @@ if __name__ == "__main__":
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(adapter_save_dir, exist_ok=True)
 
+        # Initialize iteration statistics counters
+        initial_correct_count = 0
+        rationalized_correct_count = 0
+        final_fail_count = 0
+        skipped_due_to_missing_gt = 0
+
         # Determine the model path for generation in this iteration
         if iteration == 1:
             print(f"Loading BASE model for generation: {BASE_MODEL_ID}")
@@ -231,7 +250,6 @@ if __name__ == "__main__":
         gen_model, gen_tokenizer = load_model_and_tokenizer(current_model_path_for_generation)
         gen_model.eval()
 
-        # successful_rationales_data = [] # Rename this list
         finetuning_data = [] # List to store data formatted for fine-tuning
         failed_indices = [] # Store indices of problems the model failed initially
 
@@ -239,13 +257,19 @@ if __name__ == "__main__":
         if DATASET_TYPE == 'arithmetic':
             iteration_data = train_data.shuffle(seed=42+i).select(range(min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(train_data))))
         else:
-            iteration_data = train_data # Use full dataset for CQA/GSM8K
+            if args.max_samples is not None:
+                # Use only the first N samples if max_samples is specified
+                iteration_data = train_data.select(range(min(args.max_samples, len(train_data))))
+            else:
+                iteration_data = train_data # Use full dataset for CQA/GSM8K
 
         print(f"Generating rationales for {len(iteration_data)} examples...")
         for idx, example in enumerate(tqdm(iteration_data, desc=f"Iteration {iteration} Generation", bar_format=progress_bar_format)):
             ground_truth = get_ground_truth(example, DATASET_TYPE)
             if ground_truth is None:
                 print(f"Warning: Skipping example {idx} due to missing ground truth.")
+                skipped_due_to_missing_gt += 1
+                final_fail_count += 1 # Count as a failure for this iteration's processing
                 continue
 
             # Step 1: Generate initial rationale without the answer
@@ -259,12 +283,14 @@ if __name__ == "__main__":
                 temperature=TEMPERATURE,
                 top_p=TOP_P,
                 top_k=TOP_K,
-                do_sample=DO_SAMPLE
+                do_sample=DO_SAMPLE,
+                repetition_penalty=REPETITION_PENALTY
             )
 
             if r_hat is None or y_hat is None:
                 print(f"Warning: Skipping example {idx} because initial rationale generation failed.")
                 failed_indices.append(idx)
+                final_fail_count += 1
                 continue
 
             # Normalize answers for comparison
@@ -285,11 +311,14 @@ if __name__ == "__main__":
             # Step 2 & 3: Compare predicted answer with ground truth
             is_correct = (y_hat_norm == y_norm)
 
-            if args.debug and idx < 25: # Print debug info for first few examples if debug enabled
+            if args.debug:
                  print(f"\n--- Gen Debug Example {idx} ---")
                  print(f"Ground Truth: {ground_truth}")
-                 print(f"Generated Rationale: {r_hat}")
-                 print(f"Generated Answer: {y_hat}")
+                 # Print only the question part of the prompt, excluding few-shot examples
+                 question_prompt_part = format_question(example, DATASET_TYPE)
+                 print(f"Current Question Prompt Part:\n{question_prompt_part[:-2].strip()}\n---")
+                 print(f"Generated Rationale: {r_hat}") # Print full rationale
+                 print(f"Generated Answer: {y_hat}") # Print generated answer
                  print(f"Correct: {is_correct}")
                  print("-------------------------")
 
@@ -297,16 +326,17 @@ if __name__ == "__main__":
             if is_correct:
                 # Step 4 (Correct): Use the generated rationale
                 rationale_for_finetuning = r_hat
-                if args.debug and idx < 25:
+                initial_correct_count += 1
+                if args.debug:
                      print(f"Debug: Example {idx} - Correct. Using generated rationale.")
             else:
                 # Step 5 (Incorrect): Generate rationalization using the correct answer
-                failed_indices.append(idx)
-                if args.debug and idx < 25:
+                failed_indices.append(idx) # Still track as initially failed
+                if args.debug:
                      print(f"Debug: Example {idx} - Incorrect (Predicted: {y_hat}, GT: {ground_truth}). Generating rationalization...")
 
                 # Call rationalize function
-                r_star = rationalize(
+                r_star, used_starter_phrase = rationalize(
                     model=gen_model,
                     tokenizer=gen_tokenizer,
                     question_data=example,
@@ -316,21 +346,115 @@ if __name__ == "__main__":
                     temperature=TEMPERATURE,
                     top_p=TOP_P,
                     top_k=TOP_K,
-                    do_sample=DO_SAMPLE
+                    do_sample=DO_SAMPLE,
+                    few_shot_prompt=few_shot_prompt,  # Pass the few-shot prompt
+                    repetition_penalty=REPETITION_PENALTY,
+                    debug=args.debug
                 )
 
+                # Only print rationalization details once
+                if args.debug: # Debug printing remains conditional
+                    print(f"\n==== RATIONALIZATION DETAILS FOR EXAMPLE {idx} ====")
+                    print(f"Hint Given: The correct answer is {ground_truth}")
+                    print(f"Generated Rationalization: {used_starter_phrase} {r_star}")
+                    print(f"====================================================\n")
+                    
+                # Verify if the rationalized explanation actually leads to the correct answer
                 if r_star:
-                    rationale_for_finetuning = r_star
-                    if args.debug and idx < 25:
-                         print(f"    Rationalization Details:")
-                         print(f"      Question: {example.get('question', 'N/A')[:80]}...")
-                         print(f"      Predicted Answer (Incorrect): {y_hat}")
-                         print(f"      Gold Answer: {ground_truth}")
-                         print(f"    Debug: Example {idx} - Rationalization generated: {r_star}...")
+                    # Verify if the rationalized explanation actually leads to the correct answer
+                    # by extracting the answer from the rationalized explanation
+                    
+                    # Format the question with the rationalized explanation for answer extraction
+                    formatted_for_verification = format_for_finetuning(
+                        question_data=example,
+                        rationale=r_star,
+                        answer=ground_truth,
+                        dataset_type=DATASET_TYPE
+                    )
+                    
+                    # Generate a response to extract the answer from the rationalization
+                    try:
+                        # Create a prompt to extract answer from the rationalization
+                        verification_prompt = f"{format_question(example, DATASET_TYPE)}\n{r_star}"
+                        
+                        # Use the same model to predict what answer this rationalization leads to
+                        if DATASET_TYPE == 'cqa':
+                            from prompting import extract_cqa_explicit_answer, score_cqa_answers # Ensure both are imported
+                            
+                            # Try to get an explicit answer from r_star first
+                            explicit_answer_from_r_star = extract_cqa_explicit_answer(r_star, example['choices']['label'])
+                            
+                            if explicit_answer_from_r_star:
+                                rationalized_answer = explicit_answer_from_r_star
+                                if args.debug:
+                                    print(f"    Debug: Example {idx} - Extracted explicit answer '{rationalized_answer}' from r_star for verification.")
+                            else:
+                                # Fallback to log-likelihood if no explicit answer in r_star
+                                rationalized_answer = score_cqa_answers(gen_model, gen_tokenizer, example, used_starter_phrase, r_star)
+                                if args.debug:
+                                     print(f"    Debug: Example {idx} - No explicit answer in r_star, using log-likelihood for verification, got '{rationalized_answer}'.")
+                        else:
+                            # For other datasets, generate full output and extract numeric answer
+                            verification_inputs = gen_tokenizer(verification_prompt, return_tensors="pt").to(gen_model.device)
+                            with torch.no_grad():
+                                verification_outputs = gen_model.generate(
+                                    **verification_inputs,
+                                    max_new_tokens=30,  # Short output, just looking for the answer
+                                    do_sample=False,    # Greedy decoding for verification
+                                )
+                            verification_text = gen_tokenizer.decode(
+                                verification_outputs[0][verification_inputs.input_ids.shape[1]:],
+                                skip_special_tokens=True
+                            )
+                            
+                            # Extract answer from verification text using the same parsers
+                            if DATASET_TYPE == 'gsm8k':
+                                from prompting import parse_gsm8k_output
+                                _, rationalized_answer = parse_gsm8k_output(f"{verification_prompt}\n{verification_text}")
+                            elif DATASET_TYPE == 'arithmetic':  
+                                from prompting import parse_arithmetic_output
+                                _, rationalized_answer = parse_arithmetic_output(f"{verification_prompt}\n{verification_text}")
+                        
+                        # Normalize for comparison
+                        if rationalized_answer:
+                            rationalized_answer_norm = str(rationalized_answer).strip().lower()
+                            
+                            # For numeric datasets, handle potential floating point differences
+                            if DATASET_TYPE in ['gsm8k', 'arithmetic'] and rationalized_answer_norm:
+                                try:
+                                    rationalized_answer_norm = str(int(float(rationalized_answer_norm)))
+                                except ValueError:
+                                    pass
+                            
+                            # Check if the rationalization actually leads to the correct answer
+                            is_rationalization_correct = (rationalized_answer_norm == y_norm)
+                            
+                            if is_rationalization_correct:
+                                rationale_for_finetuning = r_star
+                                rationalized_correct_count += 1
+                                if args.debug:
+                                    print(f"    Debug: Example {idx} - Rationalization verified CORRECT (leads to {rationalized_answer_norm}).")
+                            else:
+                                final_fail_count += 1
+                                if args.debug:
+                                    print(f"    Debug: Example {idx} - Rationalization verified INCORRECT (leads to {rationalized_answer_norm}, not {y_norm}).")
+                                continue  # Skip this example if rationalization doesn't lead to right answer
+                        else:
+                            final_fail_count += 1
+                            if args.debug:
+                                print(f"    Debug: Example {idx} - Couldn't verify rationalization answer, skipping.")
+                            continue  # Skip if we can't extract answer
+                    
+                    except Exception as e:
+                        final_fail_count += 1
+                        if args.debug:
+                            print(f"    Debug: Example {idx} - Error verifying rationalization: {e}")
+                        continue  # Skip on error
                 else:
                     print(f"Warning: Skipping example {idx} because rationalization failed.")
-                    if args.debug and idx < 25:
-                         print(f"    Debug: Example {idx} - Rationalization FAILED.")
+                    final_fail_count += 1
+                    if args.debug: # Debug printing remains conditional
+                        print(f"    Debug: Example {idx} - Rationalization FAILED.")
                     continue # Skip this example if rationalization fails
 
             # Format the data for fine-tuning using the chosen rationale and ALWAYS the ground truth answer
@@ -342,10 +466,32 @@ if __name__ == "__main__":
             )
 
             if formatted_instance:
-                 # successful_rationales_data.append({"text": formatted_instance}) # Old way
                  finetuning_data.append({"text": formatted_instance})
             else:
                  print(f"Warning: Skipping example {idx} due to formatting error.")
+                 final_fail_count += 1 # Count formatting errors as fails for this iteration
+
+
+        # --- Print Iteration Statistics ---
+        print(f"\n--- Iteration {iteration} Generation Statistics ---")
+        total_processed = len(iteration_data) - skipped_due_to_missing_gt
+        print(f"Total examples processed: {total_processed}")
+        if total_processed > 0:
+            print(f"  Initially correct: {initial_correct_count} ({initial_correct_count/total_processed*100:.2f}%)")
+            print(f"  Correct after rationalization: {rationalized_correct_count} ({rationalized_correct_count/total_processed*100:.2f}%)")
+            # final_fail_count includes initial gen failures, rationalization failures, and verification failures
+            # The number of examples that went to rationalization is total_processed - initial_correct_count
+            num_went_to_rationalization = total_processed - initial_correct_count
+            if num_went_to_rationalization > 0:
+                 print(f"    (Out of {num_went_to_rationalization} examples that went to rationalization, {rationalized_correct_count} were successful.)")
+            else:
+                 print(f"    (No examples went to rationalization.)")
+
+            print(f"  Ultimately failed (could not generate valid rationale for FT): {final_fail_count} ({final_fail_count/total_processed*100:.2f}%)")
+            print(f"  Total successfully prepared for fine-tuning: {len(finetuning_data)}")
+        if skipped_due_to_missing_gt > 0:
+            print(f"Skipped due to missing ground truth: {skipped_due_to_missing_gt}")
+        print("----------------------------------------------")
 
 
         # --- Clean up Generation Model ---
@@ -365,7 +511,6 @@ if __name__ == "__main__":
         print(f"Fine-tuning on {len(finetuning_data)} generated examples...")
 
         # Prepare dataset for SFTTrainer
-        # finetuning_dataset = Dataset.from_dict({"text": [item['text'] for item in successful_rationales_data]}) # Old
         finetuning_dataset = Dataset.from_dict({"text": [item['text'] for item in finetuning_data]})
 
 
@@ -401,11 +546,9 @@ if __name__ == "__main__":
 
         trainer = SFTTrainer(
             model=ft_model,
-            tokenizer=ft_tokenizer,
             train_dataset=finetuning_dataset,
-            dataset_text_field="text", # Specify the column containing the formatted text
-            max_seq_length=MAX_SEQ_LENGTH,
             args=training_args,
+            processing_class=ft_tokenizer, # Use processing_class instead of tokenizer
             # No PEFT config needed for full fine-tuning
         )
 
@@ -443,6 +586,12 @@ if __name__ == "__main__":
         
         correct_count = 0
         total_count = 0
+        
+        # Apply max_samples limit to eval data if specified
+        if args.max_samples is not None:
+            eval_data = eval_data.select(range(min(args.max_samples, len(eval_data))))
+            print(f"Using {len(eval_data)} examples for evaluation (limited by --max_samples).")
+        
         # Add evaluation loop here using generate_rationale (without filtering/rationalization)
         # Similar to the generation loop inside STaR, but on eval_data
         print(f"Evaluating on {len(eval_data)} examples...")
@@ -461,7 +610,8 @@ if __name__ == "__main__":
                 temperature=TEMPERATURE,
                 top_p=TOP_P,
                 top_k=TOP_K,
-                do_sample=DO_SAMPLE
+                do_sample=DO_SAMPLE,
+                repetition_penalty=REPETITION_PENALTY
             )
             
             # Compare case-insensitively for CQA

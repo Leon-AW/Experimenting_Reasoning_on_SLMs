@@ -3,6 +3,7 @@ import re
 import sys
 import os
 from transformers import PreTrainedModel, PreTrainedTokenizer
+import random # Add random for selecting starter phrases
 
 # Define config values directly in this file
 MAX_NEW_TOKENS = 128
@@ -11,6 +12,7 @@ TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 SEED = 42
+REPETITION_PENALTY = 1.2
 
 # Helper function to find the start of the next question in the generated text
 def find_next_question_marker(text):
@@ -98,6 +100,7 @@ def score_cqa_answers(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
     question_data: dict,
+    populated_starter: str,
     rationale: str
 ):
     """
@@ -112,14 +115,21 @@ def score_cqa_answers(
     Returns:
         The most likely answer letter (a, b, c, d, e) based on log-likelihood
     """
+    # Set seed for reproducibility in scoring
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    
     answer_choices = question_data['choices']['label']
     answer_texts = question_data['choices']['text']
+
+    answer_choices_str = "\n".join([f"({label}) {text}" for label, text in zip(answer_choices, answer_texts)])
     
     # Create completion prompt template
     question = question_data['question']
     
     # Step 1: Build a prompt with the question, rationale, and answer template
-    prompt_template = f"Q: {question}\nA: {rationale}\nTherefore, the answer is"
+    prompt_template = f"Q: {question}\n Answer Choices: {answer_choices_str}\n A: {populated_starter} {rationale}\nTherefore, the correct answer is"
     
     # Tokenize the prompt template
     template_tokens = tokenizer(prompt_template, return_tensors="pt").to(model.device)
@@ -252,6 +262,14 @@ def parse_rationale_only(text: str, dataset_type: str) -> str | None:
                  # Looks like prompt wasn't stripped, try removing first line? Risky.
                  pass # Keep as is for now, maybe log a warning if problematic
 
+    # Remove any additional questions that might be from few-shot examples
+    # Find and remove patterns like "Q: ... A:" that appear after the first section
+    q_markers = ["\nQ:", "\nQuestion:", "\nInput:"]
+    for q_marker in q_markers:
+        q_pos = rationale.find(q_marker)
+        if q_pos > 0:  # Only remove if not at the beginning (so we keep first Q: if that's how our rationale starts)
+            rationale = rationale[:q_pos].strip()
+    
     # Remove common answer extraction phrases if they appear at the end
     # Be less aggressive than before, target specific phrases from format_for_finetuning
     rationale = re.sub(r'\s*Therefore, the answer is.*?\(.*?\)(\.\s*)?$', '', rationale, flags=re.IGNORECASE | re.DOTALL).strip() # CQA format
@@ -264,6 +282,57 @@ def parse_rationale_only(text: str, dataset_type: str) -> str | None:
     # Return None if rationale is empty after stripping
     return rationale if rationale else None
 
+def extract_cqa_explicit_answer(generated_text, choices):
+    """
+    Extract an explicit answer label (a, b, c, etc.) from generated text for CQA questions.
+    If successful, returns the answer letter; otherwise returns None.
+    
+    Args:
+        generated_text: The generated rationale text
+        choices: The answer choices labels from the question data
+    """
+    # Convert choices to lowercase for case-insensitive matching
+    valid_choices = [c.lower() for c in choices]
+    
+    # Look for common answer patterns
+    patterns = [
+        # Therefore, the answer is (X).
+        r"[Tt]herefore,?\s+(?:the\s+)?answer\s+is\s+\(?([a-zA-Z])\)?\.?$",
+        # Therefore, (X).
+        r"[Tt]herefore,?\s+\(?([a-zA-Z])\)?\.?$",
+        # The answer is (X).
+        r"[Tt]he\s+answer\s+is\s+\(?([a-zA-Z])\)?\.?$",
+        # Option (X) is correct.
+        r"[Oo]ption\s+\(?([a-zA-Z])\)?\s+is\s+correct\.?$",
+        # Answer: (X)
+        r"[Aa]nswer:?\s+\(?([a-zA-Z])\)?\.?$",
+        # So the answer is (X).
+        r"[Ss]o\s+(?:the\s+)?answer\s+is\s+\(?([a-zA-Z])\)?\.?$",
+        # Ending with a letter like "... community existed. Therefore, B."
+        r"(?:Therefore|Thus|So|Hence),?\s*([a-zA-Z])\.?$",
+        # Common verb + letter patterns like "...should choose B."
+        r"\s+(?:choose|select|pick|is)\s+([a-zA-Z])\.?$",
+        # Just a single letter at the end of text
+        r"[\.\s]+([a-zA-Z])\.?$"
+    ]
+    
+    # Search for each pattern
+    for i, pattern in enumerate(patterns):
+        matches = re.finditer(pattern, generated_text)
+        # Get the last match (in case there are multiple, take the final one)
+        last_match = None
+        for match in matches:
+            last_match = match
+        
+        if last_match:
+            answer_letter = last_match.group(1).lower()
+            # Verify it's a valid choice
+            if answer_letter in valid_choices:
+                return answer_letter
+    
+    # If no pattern matched or the extracted letter wasn't in valid choices
+    return None
+
 def generate_rationale(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
@@ -274,7 +343,8 @@ def generate_rationale(
     temperature: float = TEMPERATURE,
     top_p: float = TOP_P,
     top_k: int = TOP_K,
-    do_sample: bool = DO_SAMPLE
+    do_sample: bool = DO_SAMPLE,
+    repetition_penalty: float = REPETITION_PENALTY
 ):
     """
     Generates rationale and attempts to parse the answer for a given question.
@@ -283,6 +353,11 @@ def generate_rationale(
     Returns:
         Tuple (rationale, answer) or (None, None) if generation/parsing fails.
     """
+    # Set seed for reproducibility
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    
     full_prompt = few_shot_prompt + "\n\n" + format_question(question_data, dataset_type)
     inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
 
@@ -291,6 +366,7 @@ def generate_rationale(
         "max_new_tokens": max_new_tokens,
         "pad_token_id": tokenizer.eos_token_id, # Use EOS for padding in open-ended generation
         "eos_token_id": tokenizer.eos_token_id,
+        "repetition_penalty": repetition_penalty,
     }
     current_do_sample = do_sample
     if temperature > 0.0 and current_do_sample:
@@ -314,22 +390,33 @@ def generate_rationale(
     output_token_ids = outputs[0][inputs.input_ids.shape[1]:]
     generated_text = tokenizer.decode(output_token_ids, skip_special_tokens=True).strip()
 
+    # Clean up the generated text to remove potential few-shot examples that were repeated
+    # Use parse_rationale_only to help clean up the text
+    cleaned_generated_text = parse_rationale_only(generated_text, dataset_type)
+    if cleaned_generated_text:
+        generated_text = cleaned_generated_text
 
     # --- Answer Parsing ---
     answer = None
     rationale = generated_text # Use the full generated text as potential rationale initially
 
     if dataset_type == 'cqa':
-        # For CQA, use log-likelihood scoring based on the generated rationale text
-        # Pass the *full* generated text to score_cqa_answers, as it includes rationale + answer phrase context
-        # Let score_cqa_answers handle building the appropriate prompt for scoring
-        answer = score_cqa_answers(model, tokenizer, question_data, generated_text)
+        # First try to extract explicit answer from the rationale
+        explicit_answer = extract_cqa_explicit_answer(generated_text, question_data['choices']['label'])
+        
+        if explicit_answer:
+            # Use explicitly stated answer
+            answer = explicit_answer
+        else:
+            # Fall back to log-likelihood scoring if no explicit answer found
+            # Create an empty populated_starter since we don't have one in generation phase
+            empty_populated_starter = ""
+            answer = score_cqa_answers(model, tokenizer, question_data, empty_populated_starter, generated_text)
 
-        # The 'rationale' returned should ideally be just the reasoning steps.
-        # Attempt to parse out the reasoning part before the final answer phrase.
+        # Parse rationale as before (unchanged)
         parsed_rationale = parse_rationale_only(generated_text, dataset_type)
         if parsed_rationale:
-             rationale = parsed_rationale
+            rationale = parsed_rationale
         # If parsing fails, keep the full generated_text as rationale (better than nothing)
 
 
@@ -353,6 +440,24 @@ def generate_rationale(
     return rationale, answer
 
 
+# Path to the starter phrases file
+RATIONALIZATION_STARTER_PHRASES_PATH = os.path.join(os.path.dirname(__file__), 'rationalization_starters.txt')
+
+def load_rationalization_starters():
+    """Loads rationalization starter phrases from the text file."""
+    if not os.path.exists(RATIONALIZATION_STARTER_PHRASES_PATH):
+        print(f"Warning: Rationalization starter phrases file not found at {RATIONALIZATION_STARTER_PHRASES_PATH}")
+        return ["The correct answer is {answer_placeholder} because "] # Fallback
+    with open(RATIONALIZATION_STARTER_PHRASES_PATH, 'r') as f:
+        starters = [line.strip() for line in f if line.strip()]
+    if not starters:
+        print(f"Warning: No starter phrases found in {RATIONALIZATION_STARTER_PHRASES_PATH}")
+        return ["The correct answer is {answer_placeholder} because "] # Fallback
+    return starters
+
+RATIONALIZATION_STARTERS = load_rationalization_starters()
+
+
 def rationalize(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
@@ -363,7 +468,10 @@ def rationalize(
     temperature: float = TEMPERATURE,
     top_p: float = TOP_P,
     top_k: int = TOP_K,
-    do_sample: bool = DO_SAMPLE
+    do_sample: bool = DO_SAMPLE,
+    few_shot_prompt: str = None,
+    repetition_penalty: float = REPETITION_PENALTY,
+    debug: bool = False
 ) -> str | None:
     """
     Generates a rationale (rationalization) given the question AND the correct answer.
@@ -372,47 +480,93 @@ def rationalize(
     Returns:
         The generated rationale string, or None if generation fails or yields empty rationale.
     """
-    # Format the question part of the prompt
-    formatted_question_part = format_question(question_data, dataset_type)
+    # Set seed for reproducibility
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
+    
+    # Create a modified version of the question data with the correct answer marked
+    modified_question_data = question_data.copy()
+    
+    # For CQA, mark the correct answer choice
+    if dataset_type == 'cqa' and 'choices' in modified_question_data:
+        modified_choices_labels = []
+        modified_choices_texts = []
+        
+        for label, text in zip(question_data['choices']['label'], question_data['choices']['text']):
+            if str(label).lower() == str(correct_answer).lower():
+                # Mark the correct answer
+                modified_choices_labels.append(label)
+                modified_choices_texts.append(f"{text} (Correct Answer)")
+            else:
+                modified_choices_labels.append(label)
+                modified_choices_texts.append(text)
+        
+        # Create a deep copy of choices to avoid modifying the original
+        modified_question_data['choices'] = {
+            'label': modified_choices_labels,
+            'text': modified_choices_texts
+        }
+    
+    # Format the question part of the prompt with the modified data
+    formatted_question_part = format_question(modified_question_data, dataset_type)
     # Remove the trailing 'A:' or 'Target:' added by format_question, as we'll add our own prompt ending
     if formatted_question_part.endswith("A:"):
         formatted_question_part = formatted_question_part[:-2].strip()
     elif formatted_question_part.endswith("Target:"):
          formatted_question_part = formatted_question_part[:-7].strip()
 
+    # Select a random starter phrase
+    starter_phrase_template = random.choice(RATIONALIZATION_STARTERS)
 
-    # Construct the specific rationalization prompt asking for reasoning
-    rationalization_prompt_suffix = ""
     if dataset_type == 'cqa':
         # Find the text corresponding to the correct answer label
         correct_answer_text = ""
+        placeholder_value = correct_answer # Default to the letter
         for label, text in zip(question_data['choices']['label'], question_data['choices']['text']):
             if str(label).lower() == str(correct_answer).lower():
                 correct_answer_text = text
+                placeholder_value = f"{text} ({correct_answer})" # e.g., "apple (a)"
                 break
         if not correct_answer_text:
              print(f"Warning: Could not find text for correct answer {correct_answer} in CQA.")
-             return None
-
+             # Fallback to just using the letter if text not found
+             placeholder_value = correct_answer
+        
+        # Populate the chosen starter phrase
+        populated_starter = starter_phrase_template.format(answer_placeholder=placeholder_value)
         rationalization_prompt_suffix = (
             f"{formatted_question_part.strip()}\n"
-            f"Given that the correct answer is {correct_answer_text} ({correct_answer}), provide a concise, coherent, and step-by-step explanation that logically leads to this answer. "
-            f"List your key reasoning steps in clear, numbered points, and avoid any repetition or irrelevant details.\n"
-            f"Rationale:"
+            # f"The correct answer is {correct_answer_text} ({correct_answer}).\n" # Old direct statement
+            # f"I must provide a step-by-step explanation that DEFINITELY leads to answer {correct_answer}.\n" # Old
+            # f"Rationale that proves why {correct_answer}: {correct_answer_text} is the answer:" # Old
         )
 
     elif dataset_type in ['gsm8k', 'arithmetic']:
+        placeholder_value = correct_answer
+        populated_starter = starter_phrase_template.format(answer_placeholder=placeholder_value)
         rationalization_prompt_suffix = (
             f"{formatted_question_part.strip()}\n"
-            f"Given that the correct answer is {correct_answer}, provide a concise and clear step-by-step explanation in 3-5 steps that leads to this answer. "
-            f"Ensure the explanation is well-structured and does not contain any repetitive content.\n"
-            f"Rationale:"
+            # f"The correct answer is {correct_answer}.\n" # Old
+            # f"I must provide a step-by-step explanation that DEFINITELY leads to answer {correct_answer}.\n" # Old
+            # f"Rationale that leads to {correct_answer}:" # Old
         )
     else:
         raise ValueError(f"Rationalization not implemented for dataset_type: {dataset_type}")
 
+    # For debugging, print the full prompt used for rationalization
+    if debug:
+        print(f"\n==== RATIONALIZATION PROMPT ====")
+        print(rationalization_prompt_suffix)
+        print("================================")
+
     # Combine few-shot examples, the formatted question, and the rationalization instruction
-    full_prompt = formatted_question_part + rationalization_prompt_suffix
+    if few_shot_prompt:
+        # Add few-shot examples before the current question
+        full_prompt = few_shot_prompt + "\n\n" + rationalization_prompt_suffix
+    else:
+        full_prompt = rationalization_prompt_suffix
+
     inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
 
     # Adjust sampling parameters (same logic as generate_rationale)
@@ -420,6 +574,8 @@ def rationalize(
         "max_new_tokens": max_new_tokens,
         "pad_token_id": tokenizer.eos_token_id,
         "eos_token_id": tokenizer.eos_token_id, # Stop generation naturally or when max tokens hit
+        "repetition_penalty": repetition_penalty,
+        "min_new_tokens": 10,  # Ensure model generates at least 10 tokens
     }
     current_do_sample = do_sample
     if temperature > 0.0 and current_do_sample:
@@ -443,9 +599,13 @@ def rationalize(
     # Parse/clean the generated text to get just the rationale using the new helper
     parsed_rationale = parse_rationale_only(generated_text, dataset_type)
 
+    # Remove leading "A: " if present (model might generate it mimicking few-shot format)
+    if parsed_rationale and parsed_rationale.startswith("A: "):
+        parsed_rationale = parsed_rationale[3:].strip()
+
     # We don't need to parse an 'answer' here, just return the reasoning
     # The return type is str | None (parsed_rationale can be None if empty after cleaning)
-    return parsed_rationale
+    return parsed_rationale, populated_starter # Return the starter phrase as well
 
 # Ensure parse_gsm8k_output and parse_arithmetic_output are defined above or imported
 # Ensure score_cqa_answers is defined above or imported 
