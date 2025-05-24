@@ -5,7 +5,7 @@ Answer Choices:
 (c) heart
 (d) kidney
 (e) lung
-A: The organ responsible for pumping blood throughout the body is the heart. It functions as a muscular pump that circulates blood, delivering oxygen and nutrients. The other options serve different roles: the liver processes toxins, the brain controls bodily functions, the kidneys filter blood, and the lungs are responsible for gas exchange.
+A: To determine the organ responsible for pumping blood, let's consider the primary function of each option. The liver is mainly involved in detoxification and metabolism. The brain serves as the control center for the nervous system. The kidneys are responsible for filtering waste from the blood. The lungs facilitate gas exchange (oxygen and carbon dioxide). The heart, a muscular organ, is specifically designed to pump blood throughout the circulatory system. This process ensures that oxygen and nutrients are delivered to all parts of the body. Therefore, the heart is the correct answer.
 Therefore, the answer is heart (c).
 
 Q: What is the chemical symbol for water?
@@ -15,7 +15,7 @@ Answer Choices:
 (c) H₂O
 (d) O₂
 (e) CH₄
-A: Water is composed of two hydrogen atoms and one oxygen atom. The chemical formula for this composition is H₂O. CO₂ is carbon dioxide, NaCl is salt, O₂ is oxygen gas, and CH₄ is methane.
+A: The question asks for the chemical symbol for water. I know that water is a molecule formed by hydrogen and oxygen. Specifically, it consists of two hydrogen atoms and one oxygen atom. Let's examine the options: CO₂ represents carbon dioxide. NaCl is the symbol for sodium chloride, commonly known as table salt. H₂O correctly represents two hydrogen atoms (H₂) bonded to one oxygen atom (O). O₂ is the symbol for molecular oxygen. CH₄ stands for methane. Thus, H₂O is the chemical symbol for water.
 Therefore, the answer is H₂O (c).
 
 Q: Which of these shapes has three sides?
@@ -25,7 +25,7 @@ Answer Choices:
 (c) triangle
 (d) circle
 (e) pentagon
-A: A triangle is a polygon with exactly three sides. A square and rectangle each have four sides, a circle has no sides, and a pentagon has five sides.
+A: The question requires identifying a shape with three sides. Let's evaluate each choice: A square has four equal sides. A rectangle also has four sides (two pairs of equal length). A circle is a curved shape with no straight sides. A pentagon is a polygon with five sides. A triangle, by definition, is a polygon with three sides and three angles. So, the shape with three sides is a triangle.
 Therefore, the answer is triangle (c).
 
 Q: Which planet is known as the Red Planet?
@@ -35,7 +35,7 @@ Answer Choices:
 (c) Jupiter
 (d) Mars
 (e) Saturn
-A: Mars is known as the Red Planet due to its reddish appearance, which comes from iron oxide (rust) on its surface. The other planets do not have this characteristic.
+A: The question is looking for the common nickname "Red Planet". I need to recall which planet is associated with a reddish color. Venus is often called Earth's "sister planet" and is very bright, but not typically red. Earth is known as the "Blue Planet" due to its oceans. Jupiter is a gas giant with bands of clouds, but not predominantly red. Mars is famously known for its reddish hue, which is due to iron oxide (rust) on its surface. Saturn is known for its rings. Therefore, Mars is the Red Planet.
 Therefore, the answer is Mars (d).
 
 Q: In programming, what does HTML primarily define?
@@ -45,7 +45,7 @@ Answer Choices:
 (c) the structure of a webpage
 (d) the styling of elements
 (e) the backend database
-A: HTML (HyperText Markup Language) is used to define the structure and content of webpages. It lays out headings, paragraphs, lists, links, etc. Styling is done with CSS, and logic with JavaScript.
+A: The question asks about the primary role of HTML in programming. Let's consider the options in the context of web development. (a) The logic of a program, especially on the client-side, is typically handled by JavaScript. (b) The behavior of dynamic elements is also primarily managed by JavaScript. (d) The styling of elements (how they look) is the responsibility of CSS (Cascading Style Sheets). (e) The backend database stores and manages data, which is separate from HTML's role. HTML stands for HyperText Markup Language, and its fundamental purpose is to create and organize the content and layout of a webpage, defining elements like headings, paragraphs, lists, images, and links. This is best described as the structure of a webpage.
 Therefore, the answer is the structure of a webpage (c).
 
 Q: What is the primary gas found in the Earth's atmosphere?
@@ -55,7 +55,7 @@ Answer Choices:
 (c) helium
 (d) nitrogen
 (e) hydrogen
-A: About 78% of Earth's atmosphere is composed of nitrogen. Oxygen makes up around 21%, and the rest includes trace gases like argon, CO₂, and others.
+A: To answer this, I need to recall the composition of Earth's atmosphere. While oxygen is vital for life, it is the second most abundant gas. Carbon dioxide is present in smaller amounts, though it has a significant impact on climate. Helium and hydrogen are very light gases and are found in trace amounts in the lower atmosphere. The most abundant gas, making up about 78% of the atmosphere, is nitrogen. Oxygen constitutes about 21%.
 Therefore, the answer is nitrogen (d).
 
 Q: Which of the following animals is a mammal?
@@ -65,7 +65,7 @@ Answer Choices:
 (c) dolphin
 (d) snake
 (e) salmon
-A: Dolphins are warm-blooded, give birth to live young, and nurse them with milk—all characteristics of mammals. Frogs are amphibians, eagles are birds, snakes are reptiles, and salmon are fish.
+A: The task is to identify the mammal from the given list. Key characteristics of mammals include being warm-blooded, having hair or fur, giving birth to live young (with some exceptions like monotremes), and females producing milk to feed their young. Let's examine each option: A frog is an amphibian. An eagle is a bird. A snake is a reptile. A salmon is a fish. Dolphins, however, are marine animals that are warm-blooded, breathe air, give birth to live young, and nurse them with milk. These are all defining traits of mammals.
 Therefore, the answer is dolphin (c).
 
 Q: What historical event began in 1939 and involved many nations?
@@ -75,7 +75,7 @@ Answer Choices:
 (c) World War II
 (d) The Industrial Revolution
 (e) The Great Depression
-A: World War II began in 1939 with the invasion of Poland by Germany, leading to a global conflict involving many countries. World War I began in 1914, the Cold War started post-1945, the Industrial Revolution began in the 18th century, and the Great Depression started in 1929.
+A: The question specifies an event starting in 1939 that was multinational. Let's consider the start dates and nature of the options: World War I began in 1914. The Cold War started after World War II, roughly around 1947. The Industrial Revolution was a longer period, generally considered to have started in the late 18th century. The Great Depression began in 1929. World War II is widely recognized as having begun on September 1, 1939, with the invasion of Poland by Germany, and it involved a vast number of countries across the globe. This matches the criteria.
 Therefore, the answer is World War II (c).
 
 Q: In mathematics, what is the value of π (pi) approximately?
@@ -85,7 +85,7 @@ Answer Choices:
 (c) 1.41
 (d) 4.13
 (e) 0.314
-A: Pi (π) represents the ratio of a circle’s circumference to its diameter and is approximately equal to 3.14.
+A: The question asks for the approximate value of the mathematical constant π (pi). Pi is defined as the ratio of a circle's circumference to its diameter. I need to recall its common approximation. 2.14 is too low. 1.41 is closer to the square root of 2. 4.13 is too high. 0.314 is 3.14 divided by 10. The most common and widely recognized approximation for π is 3.14, or more precisely 3.14159. Among the choices, 3.14 is the standard rounded value.
 Therefore, the answer is 3.14 (b).
 
 Q: Which part of the computer is considered the "brain"?
@@ -95,5 +95,5 @@ Answer Choices:
 (c) motherboard
 (d) CPU
 (e) monitor
-A: The CPU (Central Processing Unit) performs most of the processing inside a computer and is often referred to as its "brain." The other components support different functions: storage, memory, communication, or display.
+A: The question uses the analogy of a "brain" for a computer component, implying the part responsible for processing and control. Let's evaluate the options: The hard drive is for long-term storage. RAM (Random Access Memory) is for temporary data storage during operation. The motherboard is the main circuit board connecting all components. The monitor is an output device for display. The CPU (Central Processing Unit) is responsible for executing instructions and performing calculations, essentially controlling the computer's operations. This function aligns with the concept of a "brain."
 Therefore, the answer is CPU (d).
