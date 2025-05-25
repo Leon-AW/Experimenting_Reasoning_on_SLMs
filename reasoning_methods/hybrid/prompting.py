@@ -7,7 +7,7 @@ import random # Add random for selecting starter phrases
 
 # Define config values directly in this file
 MAX_NEW_TOKENS = 128
-TEMPERATURE = 0.7
+TEMPERATURE = 0.5
 TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
@@ -366,19 +366,19 @@ def generate_rationale(
         "pad_token_id": tokenizer.eos_token_id, # Use EOS for padding in open-ended generation
         "eos_token_id": tokenizer.eos_token_id,
     }
-    current_do_sample = do_sample
-    if temperature > 0.0 and current_do_sample:
+    
+    # Only set sampling parameters if we're actually sampling
+    if temperature > 0.0 and do_sample:
         gen_kwargs.update({
             "temperature": temperature,
             "top_p": top_p,
-            "top_k": top_k,
+            "top_k": top_k if top_k > 0 else None,
             "do_sample": True,
         })
     else:
         # Use greedy decoding if temp is 0 or do_sample is False
         gen_kwargs["do_sample"] = False
-        # Optionally set num_beams for greedy/beam search, but simple greedy is default
-        # gen_kwargs["num_beams"] = 1
+        # Don't set temperature, top_p, top_k when not sampling to avoid warnings
 
     with torch.no_grad():
         outputs = model.generate(**inputs, **gen_kwargs)
@@ -537,8 +537,8 @@ def rationalize(
         # placeholder_value = correct_answer # Not needed anymore for starter
         # populated_starter = starter_phrase_template.format(answer_placeholder=placeholder_value) # Removed
         rationalization_prompt_suffix = (
-            
             f"{formatted_question_part.strip()}\n"
+            f"I must provide a step-by-step explanation that DEFINITELY leads to answer {correct_answer}.\n"
             f"A:" # Model starts generating rationale here
             # f"The correct answer is {correct_answer}.\n" # Old
             # f"I must provide a step-by-step explanation that DEFINITELY leads to answer {correct_answer}.\n" # Old
@@ -576,12 +576,12 @@ def rationalize(
         "min_new_tokens": 10,  # Ensure model generates at least 10 tokens
     }
     
-    current_do_sample = do_sample
-    if temperature > 0.0 and current_do_sample:
+    # Only set sampling parameters if we're actually sampling
+    if temperature > 0.0 and do_sample:
         gen_kwargs.update({
             "temperature": temperature,
             "top_p": top_p,
-            "top_k": top_k,
+            "top_k": top_k if top_k > 0 else None,
             "do_sample": True,
         })
     else:

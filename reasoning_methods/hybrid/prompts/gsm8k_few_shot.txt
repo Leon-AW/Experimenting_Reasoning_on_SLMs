@@ -1,121 +1,45 @@
 Q: Mary has 3 boxes. Each box contains 5 apples. How many apples does Mary have in total?
-Answer Choices:
-(a) 15
-(b) 8
-(c) 10
-(d) 5
-(e) 20
 A: Each of the 3 boxes has 5 apples. To find the total, multiply 3 by 5.
 3 × 5 = 15
-Therefore, the answer is 15 (a).
+Therefore, the answer is 15.
 
 Q: A book costs $12 and a notebook costs $3 less. How much does the notebook cost?
-Answer Choices:
-(a) $9
-(b) $15
-(c) $10
-(d) $8
-(e) $6
 A: The notebook costs $3 less than the book, so subtract 3 from 12.
 12 − 3 = 9
-Therefore, the answer is $9 (a).
-
-⸻
+Therefore, the answer is $9.
 
 Q: There are 4 pencils in a pack. If Alice buys 6 packs, how many pencils does she have?
-Answer Choices:
-(a) 24
-(b) 20
-(c) 10
-(d) 30
-(e) 26
 A: Each pack has 4 pencils, and she buys 6 packs. Multiply 4 by 6.
 4 × 6 = 24
-Therefore, the answer is 24 (a).
-
-⸻
+Therefore, the answer is 24.
 
 Q: A train travels 60 miles in one hour. How far will it travel in 5 hours?
-Answer Choices:
-(a) 300
-(b) 120
-(c) 180
-(d) 240
-(e) 100
 A: If the train travels 60 miles in one hour, in 5 hours it will travel 60 × 5 miles.
 60 × 5 = 300
-Therefore, the answer is 300 (a).
-
-⸻
+Therefore, the answer is 300.
 
 Q: Emma has $50. She buys a toy for $18 and a book for $12. How much money does she have left?
-Answer Choices:
-(a) $20
-(b) $18
-(c) $22
-(d) $30
-(e) $25
 A: First, add the costs of the toy and book: 18 + 12 = 30. Then subtract from 50.
 50 − 30 = 20
-Therefore, the answer is $20 (a).
-
-⸻
+Therefore, the answer is $20.
 
 Q: A box holds 8 chocolates. If you have 7 such boxes, how many chocolates do you have?
-Answer Choices:
-(a) 56
-(b) 49
-(c) 64
-(d) 45
-(e) 60
 A: Multiply the number of boxes by the chocolates per box: 7 × 8 = 56
-Therefore, the answer is 56 (a).
-
-⸻
+Therefore, the answer is 56.
 
 Q: A movie lasts 2 hours and 30 minutes. If it starts at 4:15 PM, what time does it end?
-Answer Choices:
-(a) 6:30 PM
-(b) 7:00 PM
-(c) 6:45 PM
-(d) 6:15 PM
-(e) 7:30 PM
 A: Add 2 hours and 30 minutes to 4:15 PM.
 4:15 + 2:00 = 6:15 → 6:15 + 0:30 = 6:45 PM
-Therefore, the answer is 6:45 PM (c).
-
-⸻
+Therefore, the answer is 6:45 PM.
 
 Q: Jack has 5 bags of marbles. Each bag contains 12 marbles. How many marbles does he have?
-Answer Choices:
-(a) 60
-(b) 50
-(c) 70
-(d) 55
-(e) 65
 A: Multiply the number of bags by marbles per bag: 5 × 12 = 60
-Therefore, the answer is 60 (a).
-
-⸻
+Therefore, the answer is 60.
 
 Q: A bakery sold 120 cookies in the morning and 80 in the afternoon. How many cookies were sold in total?
-Answer Choices:
-(a) 200
-(b) 180
-(c) 160
-(d) 220
-(e) 190
 A: Add the two amounts together: 120 + 80 = 200
-Therefore, the answer is 200 (a).
-
-⸻
+Therefore, the answer is 200.
 
 Q: A farmer has 3 fields. Each field grows 250 carrots. How many carrots does the farmer grow in total?
-Answer Choices:
-(a) 750
-(b) 500
-(c) 600
-(d) 800
-(e) 700
 A: Multiply the number of fields by carrots per field: 3 × 250 = 750
-Therefore, the answer is 750 (a).
+Therefore, the answer is 750.

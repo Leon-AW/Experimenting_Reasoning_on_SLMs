@@ -43,7 +43,7 @@ BASE_MODEL_ID = "meta-llama/Llama-3.2-1B" # Or your 1B Llama 3.2 path
 ADAPTER_SAVE_DIR_BASE = "reasoning_methods/hybrid/star_adapters"
 
 # Dataset Configuration
-DATASET_TYPE = 'cqa' # Choose 'cqa', 'gsm8k', or 'arithmetic'
+# DATASET_TYPE = 'cqa' # Choose 'cqa', 'gsm8k', or 'arithmetic' # Removed - now set via command line
 DATA_CACHE_DIR = './data_cache'
 ARITHMETIC_DATA_PATH = os.path.join(DATA_CACHE_DIR, 'arithmetic', 'arithmetic_train.jsonl')
 NUM_ARITHMETIC_SAMPLE_PER_ITER = 10000 # As per paper for arithmetic
@@ -165,7 +165,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the STaR reasoning process.")
     parser.add_argument("--debug", action="store_true", help="Enable debug printing for generation and rationalization steps.")
     parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of samples to use for training (useful for testing).")
+    parser.add_argument("--dataset", type=str, choices=['cqa', 'gsm8k', 'arithmetic'], default='cqa', 
+                       help="Dataset to use for training. Options: cqa (CommonsenseQA), gsm8k (GSM8K), arithmetic (generated arithmetic problems)")
     args = parser.parse_args()
+
+    # Set DATASET_TYPE from command line argument
+    DATASET_TYPE = args.dataset
 
     print(f"Starting STaR process for dataset: {DATASET_TYPE}")
     print(f"Base model: {BASE_MODEL_ID}")
@@ -246,15 +251,19 @@ if __name__ == "__main__":
         finetuning_data = [] # List to store data formatted for fine-tuning
         failed_indices = [] # Store indices of problems the model failed initially
 
-        # Select data for this iteration (especially for large datasets like arithmetic)
-        if DATASET_TYPE == 'arithmetic':
-            iteration_data = train_data.shuffle(seed=SEED+i).select(range(min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(train_data))))
+        # Select data for this iteration
+        if args.max_samples is not None:
+            # When max_samples is specified, treat all datasets equally
+            iteration_data = train_data.shuffle(seed=SEED+i).select(range(min(args.max_samples, len(train_data))))
         else:
-            if args.max_samples is not None:
-                # Use only the first N samples if max_samples is specified
-                iteration_data = train_data.select(range(min(args.max_samples, len(train_data))))
+            # When max_samples is not specified, use dataset-specific defaults
+            if DATASET_TYPE == 'arithmetic':
+                # For arithmetic, use the paper's recommended sample size per iteration
+                num_samples = min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(train_data))
+                iteration_data = train_data.shuffle(seed=SEED+i).select(range(num_samples))
             else:
-                iteration_data = train_data # Use full dataset for CQA/GSM8K
+                # For CQA/GSM8K, use full dataset
+                iteration_data = train_data
 
         print(f"Generating rationales for {len(iteration_data)} examples...")
         for idx, example in enumerate(tqdm(iteration_data, desc=f"Iteration {iteration} Generation", bar_format=progress_bar_format)):
@@ -402,6 +411,8 @@ if __name__ == "__main__":
                                         **verification_inputs,
                                         max_new_tokens=30,  # Short output, just looking for the answer
                                         do_sample=False,    # Greedy decoding for verification
+                                        pad_token_id=gen_tokenizer.eos_token_id,
+                                        eos_token_id=gen_tokenizer.eos_token_id,
                                     )
                                 verification_text = gen_tokenizer.decode(
                                     verification_outputs[0][verification_inputs.input_ids.shape[1]:],
