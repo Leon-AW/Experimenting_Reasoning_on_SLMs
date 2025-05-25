@@ -22,14 +22,6 @@ import sys
 # Add parent directory to path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Define generation parameters (copied from prompting/config.py)
-# MAX_NEW_TOKENS = 128
-# TEMPERATURE = 0.5
-# TOP_P = 0.9
-# TOP_K = 0
-# DO_SAMPLE = True
-SEED = 42
-
 # Assuming prompting.py and prepare_datasets.py are in the same directory
 from prompting import (
     generate_rationale, 
@@ -40,7 +32,7 @@ from prompting import (
     TOP_K, 
     DO_SAMPLE, 
     MAX_NEW_TOKENS,
-    REPETITION_PENALTY
+    SEED,
 )
 from prepare_datasets import load_commonsense_qa, load_gsm8k, generate_arithmetic_dataset
 
@@ -256,7 +248,7 @@ if __name__ == "__main__":
 
         # Select data for this iteration (especially for large datasets like arithmetic)
         if DATASET_TYPE == 'arithmetic':
-            iteration_data = train_data.shuffle(seed=42+i).select(range(min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(train_data))))
+            iteration_data = train_data.shuffle(seed=SEED+i).select(range(min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(train_data))))
         else:
             if args.max_samples is not None:
                 # Use only the first N samples if max_samples is specified
@@ -285,7 +277,6 @@ if __name__ == "__main__":
                 top_p=TOP_P,
                 top_k=TOP_K,
                 do_sample=DO_SAMPLE,
-                repetition_penalty=REPETITION_PENALTY
             )
 
             if r_hat is None or y_hat is None:
@@ -336,8 +327,8 @@ if __name__ == "__main__":
                 if args.debug:
                      print(f"Debug: Example {idx} - Incorrect (Predicted: {y_hat}, GT: {ground_truth}). Generating rationalization...")
 
-                # Try up to 3 times to generate a valid rationalization that leads to the correct answer
-                max_rationalization_attempts = 3
+                # Try up to 5 times to generate a valid rationalization that leads to the correct answer
+                max_rationalization_attempts = 5
                 successful_rationalization = False
                 rationalization_attempt = 0
                 
@@ -358,7 +349,6 @@ if __name__ == "__main__":
                         top_k=TOP_K,
                         do_sample=DO_SAMPLE,
                         few_shot_prompt=few_shot_prompt,  # Pass the few-shot prompt
-                        repetition_penalty=REPETITION_PENALTY,
                         debug=args.debug,
                         attempt_number=rationalization_attempt  # Pass attempt number for varied sampling
                     )
@@ -643,7 +633,6 @@ if __name__ == "__main__":
                 top_p=TOP_P,
                 top_k=TOP_K,
                 do_sample=DO_SAMPLE,
-                repetition_penalty=REPETITION_PENALTY
             )
             
             # Compare case-insensitively for CQA

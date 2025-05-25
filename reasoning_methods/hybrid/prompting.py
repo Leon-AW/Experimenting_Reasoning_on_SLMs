@@ -7,12 +7,11 @@ import random # Add random for selecting starter phrases
 
 # Define config values directly in this file
 MAX_NEW_TOKENS = 128
-TEMPERATURE = 0.5
+TEMPERATURE = 0.7
 TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
 SEED = 42
-REPETITION_PENALTY = 1.2
 
 # Helper function to find the start of the next question in the generated text
 def find_next_question_marker(text):
@@ -295,6 +294,8 @@ def extract_cqa_explicit_answer(generated_text, choices):
     
     # Look for common answer patterns
     patterns = [
+        # Final answer: (X)
+        r"[Ff]inal\s+answer:?\s*\(?([a-zA-Z])\)?\.?$",
         # Therefore, the answer is (X).
         r"[Tt]herefore,?\s+(?:the\s+)?answer\s+is\s+\(?([a-zA-Z])\)?\.?$",
         # Therefore, (X).
@@ -342,8 +343,7 @@ def generate_rationale(
     temperature: float = TEMPERATURE,
     top_p: float = TOP_P,
     top_k: int = TOP_K,
-    do_sample: bool = DO_SAMPLE,
-    repetition_penalty: float = REPETITION_PENALTY
+    do_sample: bool = DO_SAMPLE
 ):
     """
     Generates rationale and attempts to parse the answer for a given question.
@@ -365,7 +365,6 @@ def generate_rationale(
         "max_new_tokens": max_new_tokens,
         "pad_token_id": tokenizer.eos_token_id, # Use EOS for padding in open-ended generation
         "eos_token_id": tokenizer.eos_token_id,
-        "repetition_penalty": repetition_penalty,
     }
     current_do_sample = do_sample
     if temperature > 0.0 and current_do_sample:
@@ -469,7 +468,6 @@ def rationalize(
     top_k: int = TOP_K,
     do_sample: bool = DO_SAMPLE,
     few_shot_prompt: str = None,  # Add parameter for few-shot examples
-    repetition_penalty: float = REPETITION_PENALTY,
     debug: bool = False,
     attempt_number: int = 0  # Add attempt_number parameter
 ) -> str | None:
@@ -575,7 +573,6 @@ def rationalize(
         "max_new_tokens": max_new_tokens,
         "pad_token_id": tokenizer.eos_token_id,
         "eos_token_id": tokenizer.eos_token_id, # Stop generation naturally or when max tokens hit
-        "repetition_penalty": repetition_penalty,
         "min_new_tokens": 10,  # Ensure model generates at least 10 tokens
     }
     
