@@ -1,55 +1,170 @@
-Q: What is 27 + 45?
-A: To add 27 and 45, add the tens and ones separately:
+Input:
+27 + 45
+Target:
+<scratch>
+I need to add 27 and 45.
+Step 1: Break down the numbers into tens and ones
+27 = 20 + 7
+45 = 40 + 5
+Step 2: Add the tens together
 20 + 40 = 60
+Step 3: Add the ones together
 7 + 5 = 12
+Step 4: Combine the results
 60 + 12 = 72
-Therefore, the answer is 72.
+</scratch>
+72
 
-Q: What is 96 - 38?
-A: Subtract 38 from 96. Break it down:
+Input:
+96 - 38
+Target:
+<scratch>
+I need to subtract 38 from 96.
+Step 1: Break down the subtraction
+96 - 38
+Step 2: First subtract the tens
 96 - 30 = 66
+Step 3: Then subtract the remaining ones
 66 - 8 = 58
-Therefore, the answer is 58.
+Step 4: Verify the calculation
+96 - 38 = 58
+</scratch>
+58
 
-Q: What is 7 × 8?
-A: Multiplying 7 by 8 gives:
+Input:
+7 × 8
+Target:
+<scratch>
+I need to multiply 7 by 8.
+Step 1: Recall the multiplication fact
 7 × 8 = 56
-Therefore, the answer is 56.
+Step 2: Verify by thinking of it as repeated addition
+7 + 7 + 7 + 7 + 7 + 7 + 7 + 7 = 56
+</scratch>
+56
 
-Q: What is 144 ÷ 12?
-A: Divide 144 by 12:
-144 ÷ 12 = 12
-Therefore, the answer is 12.
+Input:
+144 ÷ 12
+Target:
+<scratch>
+I need to divide 144 by 12.
+Step 1: Think about how many times 12 goes into 144
+12 × 10 = 120
+12 × 12 = 144
+Step 2: So 144 ÷ 12 = 12
+</scratch>
+12
 
-Q: What is 15 + 28?
-A: Add 15 and 28:
-15 + 28 = 43
-Therefore, the answer is 43.
+Input:
+15 + 28
+Target:
+<scratch>
+I need to add 15 and 28.
+Step 1: Break down into tens and ones
+15 = 10 + 5
+28 = 20 + 8
+Step 2: Add the tens
+10 + 20 = 30
+Step 3: Add the ones
+5 + 8 = 13
+Step 4: Combine the results
+30 + 13 = 43
+</scratch>
+43
 
-Q: What is 63 - 29?
-A: Subtract 29 from 63:
+Input:
+63 - 29
+Target:
+<scratch>
+I need to subtract 29 from 63.
+Step 1: Use the strategy of subtracting 30 and adding back 1
 63 - 30 = 33
+Step 2: Add back the extra 1 we subtracted
 33 + 1 = 34
-Therefore, the answer is 34.
+Step 3: Verify: 63 - 29 = 34
+</scratch>
+34
 
-Q: What is 9 × 6?
-A: 9 times 6 is:
+Input:
+9 × 6
+Target:
+<scratch>
+I need to multiply 9 by 6.
+Step 1: Use the multiplication fact
 9 × 6 = 54
-Therefore, the answer is 54.
+Step 2: Double-check by thinking of it as 6 × 9
+6 × 9 = 54
+</scratch>
+54
 
-Q: What is 81 ÷ 9?
-A: 81 divided by 9 equals:
-81 ÷ 9 = 9
-Therefore, the answer is 9.
+Input:
+81 ÷ 9
+Target:
+<scratch>
+I need to divide 81 by 9.
+Step 1: Think about the multiplication table for 9
+9 × 9 = 81
+Step 2: Therefore, 81 ÷ 9 = 9
+</scratch>
+9
 
-Q: What is 47 + 36?
-A: Break it into parts:
+Input:
+47 + 36
+Target:
+<scratch>
+I need to add 47 and 36.
+Step 1: Break into tens and ones
+47 = 40 + 7
+36 = 30 + 6
+Step 2: Add the tens
 40 + 30 = 70
+Step 3: Add the ones
 7 + 6 = 13
+Step 4: Combine the results
 70 + 13 = 83
-Therefore, the answer is 83.
+</scratch>
+83
 
-Q: What is 100 - 67?
-A: Subtracting 67 from 100:
-100 - 67 = 33
-Therefore, the answer is 33.
+Input:
+100 - 67
+Target:
+<scratch>
+I need to subtract 67 from 100.
+Step 1: Set up the subtraction
+100 - 67
+Step 2: Since 100 is a round number, I can think of it as
+100 - 60 - 7 = 40 - 7 = 33
+Step 3: Verify: 100 - 67 = 33
+</scratch>
+33
+
+Input:
+125 + 78
+Target:
+<scratch>
+I need to add 125 and 78.
+Step 1: Break down the numbers
+125 = 100 + 20 + 5
+78 = 70 + 8
+Step 2: Add the hundreds
+100 + 0 = 100
+Step 3: Add the tens
+20 + 70 = 90
+Step 4: Add the ones
+5 + 8 = 13
+Step 5: Combine all parts
+100 + 90 + 13 = 203
+</scratch>
+203
+
+Input:
+84 ÷ 7
+Target:
+<scratch>
+I need to divide 84 by 7.
+Step 1: Think about multiples of 7
+7 × 10 = 70
+7 × 12 = 84
+Step 2: Therefore, 84 ÷ 7 = 12
+</scratch>
+12

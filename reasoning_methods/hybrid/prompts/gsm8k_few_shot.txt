@@ -1,45 +1,84 @@
 Q: Mary has 3 boxes. Each box contains 5 apples. How many apples does Mary have in total?
-A: Each of the 3 boxes has 5 apples. To find the total, multiply 3 by 5.
-3 × 5 = 15
-Therefore, the answer is 15.
+A: I need to find the total number of apples.
+Step 1: Identify what I know - Mary has 3 boxes, each box has 5 apples
+Step 2: To find the total, I multiply the number of boxes by apples per box
+Step 3: Calculate: 3 × 5 = 15
+Therefore, the final answer is: 15
 
 Q: A book costs $12 and a notebook costs $3 less. How much does the notebook cost?
-A: The notebook costs $3 less than the book, so subtract 3 from 12.
-12 − 3 = 9
-Therefore, the answer is $9.
+A: I need to find the cost of the notebook.
+Step 1: The book costs $12
+Step 2: The notebook costs $3 less than the book
+Step 3: Calculate: $12 - $3 = $9
+Therefore, the final answer is: 9
 
 Q: There are 4 pencils in a pack. If Alice buys 6 packs, how many pencils does she have?
-A: Each pack has 4 pencils, and she buys 6 packs. Multiply 4 by 6.
-4 × 6 = 24
-Therefore, the answer is 24.
+A: I need to find the total number of pencils Alice has.
+Step 1: Each pack contains 4 pencils
+Step 2: Alice buys 6 packs
+Step 3: Total pencils = 6 packs × 4 pencils per pack = 24 pencils
+Therefore, the final answer is: 24
 
 Q: A train travels 60 miles in one hour. How far will it travel in 5 hours?
-A: If the train travels 60 miles in one hour, in 5 hours it will travel 60 × 5 miles.
-60 × 5 = 300
-Therefore, the answer is 300.
+A: I need to find the total distance traveled in 5 hours.
+Step 1: The train travels 60 miles in 1 hour
+Step 2: In 5 hours, it will travel 5 times that distance
+Step 3: Total distance = 60 miles × 5 hours = 300 miles
+Therefore, the final answer is: 300
 
 Q: Emma has $50. She buys a toy for $18 and a book for $12. How much money does she have left?
-A: First, add the costs of the toy and book: 18 + 12 = 30. Then subtract from 50.
-50 − 30 = 20
-Therefore, the answer is $20.
+A: I need to find how much money Emma has left.
+Step 1: Emma starts with $50
+Step 2: She spends $18 on a toy and $12 on a book
+Step 3: Total spent = $18 + $12 = $30
+Step 4: Money left = $50 - $30 = $20
+Therefore, the final answer is: 20
 
 Q: A box holds 8 chocolates. If you have 7 such boxes, how many chocolates do you have?
-A: Multiply the number of boxes by the chocolates per box: 7 × 8 = 56
-Therefore, the answer is 56.
+A: I need to find the total number of chocolates.
+Step 1: Each box holds 8 chocolates
+Step 2: I have 7 boxes
+Step 3: Total chocolates = 7 boxes × 8 chocolates per box = 56 chocolates
+Therefore, the final answer is: 56
 
 Q: A movie lasts 2 hours and 30 minutes. If it starts at 4:15 PM, what time does it end?
-A: Add 2 hours and 30 minutes to 4:15 PM.
-4:15 + 2:00 = 6:15 → 6:15 + 0:30 = 6:45 PM
-Therefore, the answer is 6:45 PM.
+A: I need to find when the movie ends.
+Step 1: The movie starts at 4:15 PM
+Step 2: The movie lasts 2 hours and 30 minutes
+Step 3: Add the duration: 4:15 PM + 2:00 = 6:15 PM, then 6:15 PM + 0:30 = 6:45 PM
+Therefore, the final answer is: 6:45 PM
 
 Q: Jack has 5 bags of marbles. Each bag contains 12 marbles. How many marbles does he have?
-A: Multiply the number of bags by marbles per bag: 5 × 12 = 60
-Therefore, the answer is 60.
+A: I need to find the total number of marbles Jack has.
+Step 1: Jack has 5 bags
+Step 2: Each bag contains 12 marbles
+Step 3: Total marbles = 5 bags × 12 marbles per bag = 60 marbles
+Therefore, the final answer is: 60
 
 Q: A bakery sold 120 cookies in the morning and 80 in the afternoon. How many cookies were sold in total?
-A: Add the two amounts together: 120 + 80 = 200
-Therefore, the answer is 200.
+A: I need to find the total number of cookies sold.
+Step 1: Morning sales = 120 cookies
+Step 2: Afternoon sales = 80 cookies
+Step 3: Total = 120 + 80 = 200 cookies
+Therefore, the final answer is: 200
 
 Q: A farmer has 3 fields. Each field grows 250 carrots. How many carrots does the farmer grow in total?
-A: Multiply the number of fields by carrots per field: 3 × 250 = 750
-Therefore, the answer is 750.
+A: I need to find the total number of carrots.
+Step 1: The farmer has 3 fields
+Step 2: Each field grows 250 carrots
+Step 3: Total carrots = 3 fields × 250 carrots per field = 750 carrots
+Therefore, the final answer is: 750
+
+Q: Sarah works 8 hours a day and earns $15 per hour. How much does she earn in one day?
+A: I need to find Sarah's daily earnings.
+Step 1: Sarah works 8 hours per day
+Step 2: She earns $15 per hour
+Step 3: Daily earnings = 8 hours × $15 per hour = $120
+Therefore, the final answer is: 120
+
+Q: A school has 6 classrooms. Each classroom has 25 students. How many students are in the school?
+A: I need to find the total number of students.
+Step 1: The school has 6 classrooms
+Step 2: Each classroom has 25 students
+Step 3: Total students = 6 classrooms × 25 students per classroom = 150 students
+Therefore, the final answer is: 150

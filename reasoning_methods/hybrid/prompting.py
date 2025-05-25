@@ -7,7 +7,7 @@ import random # Add random for selecting starter phrases
 
 # Define config values directly in this file
 MAX_NEW_TOKENS = 128
-TEMPERATURE = 0.5
+TEMPERATURE = 0.7
 TOP_P = 0.9
 TOP_K = 0
 DO_SAMPLE = True
@@ -526,32 +526,18 @@ def rationalize(
              # Fallback to just using the letter if text not found
              placeholder_value = correct_answer
         
-        # Populate the chosen starter phrase
-        # populated_starter = starter_phrase_template.format(answer_placeholder=placeholder_value) # Removed
         rationalization_prompt_suffix = (
             f"Q: {question_data['question']}\n"
             f"Answer Choices:\n{modified_choices_str}\n"
-            f"A: " # Model starts generating rationale here
+            f"A: I need to explain why the answer is {correct_answer_text} ({correct_answer}). Let me think through this step by step:\n" # More explicit guidance
         )
     elif dataset_type in ['gsm8k', 'arithmetic']:
-        # placeholder_value = correct_answer # Not needed anymore for starter
-        # populated_starter = starter_phrase_template.format(answer_placeholder=placeholder_value) # Removed
         rationalization_prompt_suffix = (
             f"{formatted_question_part.strip()}\n"
-            f"I must provide a step-by-step explanation that DEFINITELY leads to answer {correct_answer}.\n"
-            f"A:" # Model starts generating rationale here
-            # f"The correct answer is {correct_answer}.\n" # Old
-            # f"I must provide a step-by-step explanation that DEFINITELY leads to answer {correct_answer}.\n" # Old
-            # f"Rationale that leads to {correct_answer}:" # Old
+            f"A: I need to solve this step by step to get {correct_answer}. Let me break it down:\n" # More explicit and structured
         )
     else:
         raise ValueError(f"Rationalization not implemented for dataset_type: {dataset_type}")
-
-    # For debugging, print the full prompt used for rationalization
-    if debug:
-        print(f"\n==== RATIONALIZATION PROMPT ====")
-        print(rationalization_prompt_suffix)
-        print("================================")
 
     # Combine few-shot examples, the formatted question, and the rationalization instruction
     if few_shot_prompt:
@@ -618,3 +604,45 @@ def rationalize(
 
 # Ensure parse_gsm8k_output and parse_arithmetic_output are defined above or imported
 # Ensure score_cqa_answers is defined above or imported 
+
+def format_for_finetuning(question_data, rationale, answer, dataset_type):
+    """Formats the rationale into a single string for SFTTrainer."""
+    # Ensure rationale and answer are strings
+    rationale_str = str(rationale) if rationale is not None else ""
+    answer_str = str(answer) if answer is not None else ""
+
+    # Gets the Q: part, handling potential missing keys gracefully
+    formatted_question = format_question(question_data, dataset_type)
+
+    if dataset_type == 'cqa':
+        # Find the answer text corresponding to the answer letter
+        answer_text = ""
+        for label, text in zip(question_data['choices']['label'], question_data['choices']['text']):
+            if label == answer:
+                answer_text = text
+                break
+        # Example Format: "Q: ...\nAnswer Choices:...\nA: [Rationale] Therefore, the answer is [Answer Text] ([Letter])."
+        # Ensure the rationale doesn't already end with the answer phrase
+        final_answer_phrase = f"Therefore, the answer is {answer_text} ({answer})."
+        if rationale_str.strip().endswith(final_answer_phrase):
+             # Avoid duplicating the final answer phrase if the model generated it
+             return f"{formatted_question.strip()}\n{rationale_str.strip()}"
+        else:
+             return f"{formatted_question.strip()}\n{rationale_str.strip()} {final_answer_phrase}"
+
+    elif dataset_type == 'arithmetic':
+        # Example Format: "Input:\nNUM1 + NUM2\nTarget:\n<scratch>...</scratch>\nANSWER"
+        # Rationale here is the scratchpad content
+        return f"{formatted_question.strip()}\n<scratch>{rationale_str.strip()}</scratch>\n{answer_str}"
+
+    elif dataset_type == 'gsm8k':
+        # Example Format: "Q: ...\nA: [Rationale] The final answer is: [Answer]"
+        final_answer_phrase = f"The final answer is: {answer_str}"
+         # Avoid duplicating the final answer phrase if the model generated it
+        if rationale_str.strip().endswith(final_answer_phrase):
+             return f"{formatted_question.strip()}\n{rationale_str.strip()}"
+        else:
+             return f"{formatted_question.strip()}\n{rationale_str.strip()} {final_answer_phrase}"
+
+    else:
+        raise ValueError(f"Unknown dataset_type for fine-tuning format: {dataset_type}") 
