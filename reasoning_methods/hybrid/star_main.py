@@ -164,7 +164,8 @@ def run_star_process(
     debug: bool = False,
     rationales_output_dir: str = "collected_rationales",
     models_output_dir: str = "star_models",
-    evaluate_each_iteration: bool = True
+    evaluate_each_iteration: bool = True,
+    start_index: int = 0
 ):
     """
     Run the complete STaR process.
@@ -183,6 +184,7 @@ def run_star_process(
         rationales_output_dir: Directory to save collected rationales
         models_output_dir: Directory to save fine-tuned models
         evaluate_each_iteration: Whether to evaluate after each iteration
+        start_index: Index to start collecting samples from in the first iteration
         
     Returns:
         Dictionary with results from all iterations
@@ -194,6 +196,8 @@ def run_star_process(
     print(f"Iterations: {num_iterations}")
     if max_samples:
         print(f"Max Samples per Iteration: {max_samples}")
+    if start_index > 0:
+        print(f"Initial Start Index for Collection: {start_index}")
     print(f"{'='*60}")
     
     # Create output directories
@@ -225,6 +229,9 @@ def run_star_process(
         # Phase 1: Collect rationales using M_{n-1}
         print(f"\nPhase 1: Collecting rationales using model: {current_model_path}")
         
+        # Use start_index only for the first iteration if specified, then 0 for subsequent ones.
+        current_start_index = start_index if iteration == 1 else 0
+
         try:
             collection_stats = collect_rationales_for_iteration(
                 model_path=current_model_path,
@@ -232,7 +239,8 @@ def run_star_process(
                 iteration=iteration,
                 output_dir=rationales_output_dir,
                 max_samples=max_samples,
-                debug=debug
+                debug=debug,
+                start_index=current_start_index
             )
             iteration_results['collection_stats'] = collection_stats
             
@@ -341,7 +349,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_iterations", type=int, default=NUM_STAR_ITERATIONS,
                        help="Number of STaR iterations")
     parser.add_argument("--max_samples", type=int, default=None,
-                       help="Maximum number of samples to process per iteration (for testing)")
+                       help="Target number of total rationales to collect per iteration (sum of generated and rationalized). If None, processes a default number of samples based on dataset type.")
     parser.add_argument("--debug", action="store_true",
                        help="Enable debug printing")
     parser.add_argument("--rationales_dir", type=str, default="collected_rationales",
@@ -350,6 +358,8 @@ if __name__ == "__main__":
                        help="Directory to save fine-tuned models")
     parser.add_argument("--no_eval", action="store_true",
                        help="Skip evaluation after each iteration")
+    parser.add_argument("--start_index", type=int, default=0,
+                       help="Index to start collecting samples from (applies to first iteration or --collect_only)")
     
     # Options for running individual phases
     parser.add_argument("--collect_only", action="store_true",
@@ -377,7 +387,8 @@ if __name__ == "__main__":
             iteration=args.iteration,
             output_dir=args.rationales_dir,
             max_samples=args.max_samples,
-            debug=args.debug
+            debug=args.debug,
+            start_index=args.start_index
         )
         print("Collection completed.")
         
@@ -417,7 +428,8 @@ if __name__ == "__main__":
             debug=args.debug,
             rationales_output_dir=args.rationales_dir,
             models_output_dir=args.models_dir,
-            evaluate_each_iteration=not args.no_eval
+            evaluate_each_iteration=not args.no_eval,
+            start_index=args.start_index
         )
         
         # Print summary

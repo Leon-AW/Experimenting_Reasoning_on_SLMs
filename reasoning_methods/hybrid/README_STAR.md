@@ -102,11 +102,12 @@ python finetune.py --rationales_dir ./collected_rationales --dataset cqa --itera
 
 - `--dataset`: Dataset type (`cqa`, `gsm8k`, `arithmetic`)
 - `--num_iterations`: Number of STaR iterations (default: 5)
-- `--max_samples`: Limit samples per iteration (useful for testing)
+- `--max_samples`: Target number of total rationales (sum of generated and rationalized) to collect per iteration. If not specified, a default number of input samples are processed based on the dataset type.
 - `--debug`: Enable detailed debug output
 - `--rationales_dir`: Directory to save collected rationales
 - `--models_dir`: Directory to save fine-tuned models
 - `--no_eval`: Skip evaluation after each iteration
+- `--start_index`: Index to start collecting samples from (default: 0). For the full STaR process, this applies only to the first iteration. For `--collect_only`, it applies to that specific collection run.
 
 ### Individual Phase Arguments
 

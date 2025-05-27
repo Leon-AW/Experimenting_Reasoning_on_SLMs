@@ -88,7 +88,8 @@ def collect_rationales_for_iteration(
     iteration: int,
     output_dir: str,
     max_samples: int = None,
-    debug: bool = False
+    debug: bool = False,
+    start_index: int = 0
 ):
     """
     Collect rationales for a single STaR iteration.
@@ -104,8 +105,9 @@ def collect_rationales_for_iteration(
         dataset_type: Type of dataset ('cqa', 'gsm8k', 'arithmetic')
         iteration: Current iteration number
         output_dir: Directory to save collected rationales
-        max_samples: Maximum number of samples to process (for testing)
+        max_samples: Target number of total rationales to collect. If None, processes a default number of samples.
         debug: Enable debug printing
+        start_index: Index to start processing samples from
         
     Returns:
         Dictionary with statistics about the collection process
@@ -141,17 +143,31 @@ def collect_rationales_for_iteration(
         raise ValueError(f"Unknown dataset_type: {dataset_type}")
     
     # Select data for this iteration
-    if max_samples is not None:
-        iteration_data = train_data.shuffle(seed=SEED + iteration).select(range(min(max_samples, len(train_data))))
-    else:
-        if dataset_type == 'arithmetic':
-            num_samples = min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(train_data))
-            iteration_data = train_data.shuffle(seed=SEED + iteration).select(range(num_samples))
+    data_to_process = train_data
+    if start_index > 0:
+        if start_index >= len(train_data):
+            print(f"Warning: start_index {start_index} is beyond the dataset size {len(train_data)}. No data to process.")
+            data_to_process = train_data.select(range(0,0)) # Empty selection
         else:
-            iteration_data = train_data
-    
-    print(f"Processing {len(iteration_data)} examples...")
-    
+            data_to_process = train_data.select(range(start_index, len(train_data)))
+            
+    effective_max_samples_to_process = len(data_to_process)
+
+    if max_samples is None: # max_samples here refers to target rationales
+        # Original logic for processing a fixed number of *input samples* if no target for *rationales* is set
+        if dataset_type == 'arithmetic':
+            # Limit to NUM_ARITHMETIC_SAMPLE_PER_ITER if not targeting specific rationale count
+            # and if data_to_process is larger than this limit
+            num_arithmetic_to_process = min(NUM_ARITHMETIC_SAMPLE_PER_ITER, len(data_to_process))
+            if len(data_to_process) > num_arithmetic_to_process:
+                 data_to_process = data_to_process.select(range(num_arithmetic_to_process))
+            effective_max_samples_to_process = len(data_to_process)
+        # For CQA and GSM8K, without max_samples (target rationales), process all available data_to_process
+        print(f"Processing up to {effective_max_samples_to_process} examples (starting from original index {start_index})...")
+    else:
+        # max_samples is a target for *collected rationales*
+        print(f"Attempting to collect {max_samples} rationales by processing up to {effective_max_samples_to_process} examples (starting from original index {start_index})...")
+
     # Load model
     print(f"Loading model: {model_path}")
     model, tokenizer = load_model_and_tokenizer(model_path)
@@ -173,181 +189,222 @@ def collect_rationales_for_iteration(
     }
     
     # Progress bar format
-    progress_bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} [elapsed: {elapsed}, remaining: {remaining}]"
+    progress_bar_format = "{l_bar}{bar}| {n_fmt}/{total_fmt} [elapsed: {elapsed}, remaining: {remaining}] {postfix}"
     
     # Process each example
-    for idx, example in enumerate(tqdm(iteration_data, desc=f"Iteration {iteration} Collection", bar_format=progress_bar_format)):
-        ground_truth = get_ground_truth(example, dataset_type)
-        if ground_truth is None:
-            if debug:
-                print(f"Warning: Skipping example {idx} due to missing ground truth.")
-            stats['skipped_missing_gt'] += 1
-            continue
+    # tqdm will iterate over available data; we break early if max_samples (target rationales) is met.
+    with tqdm(total=max_samples if max_samples is not None else effective_max_samples_to_process, 
+              desc=f"Iteration {iteration} Collection", 
+              bar_format=progress_bar_format) as pbar:
         
-        stats['total_processed'] += 1
-        
-        # Step 3: Generate initial rationale without the answer
-        r_hat, y_hat = generate_rationale(
-            model=model,
-            tokenizer=tokenizer,
-            few_shot_prompt=few_shot_prompt,
-            question_data=example,
-            dataset_type=dataset_type,
-            max_new_tokens=MAX_NEW_TOKENS,
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            top_k=TOP_K,
-            do_sample=DO_SAMPLE,
-        )
-        
-        if r_hat is None or y_hat is None:
-            if debug:
-                print(f"Warning: Skipping example {idx} because initial rationale generation failed.")
-            stats['final_failures'] += 1
-            continue
-        
-        # Normalize answers for comparison
-        y_hat_norm = str(y_hat).strip().lower()
-        y_norm = str(ground_truth).strip().lower()
-        
-        # For numeric datasets, handle potential floating point differences
-        if dataset_type in ['gsm8k', 'arithmetic']:
-            try:
-                y_hat_norm = str(int(float(y_hat_norm)))
-                y_norm = str(int(float(y_norm)))
-            except ValueError:
-                pass
-        
-        is_correct = (y_hat_norm == y_norm)
-        
-        if debug:
-            print(f"\n--- Generation Debug Example {idx} ---")
-            print(f"Ground Truth: {ground_truth}")
-            print(f"Generated Rationale: {r_hat}")
-            print(f"Generated Answer: {y_hat}")
-            print(f"Correct: {is_correct}")
-            print("----------------------------------------")
-        
-        if is_correct:
-            # Step 5: Keep successful self-generated rationale
-            stats['initial_correct'] += 1
+        for current_idx, example in enumerate(data_to_process):
+            if max_samples is not None:
+                # Update tqdm total dynamically if we are targeting rationales
+                pbar.total = max_samples 
+                pbar.set_postfix_str(f"Collected: {stats['generated_rationales_count'] + stats['rationalized_rationales_count']}/{max_samples}, Processed: {stats['total_processed']}")
+            else:
+                # Tqdm total is the number of samples to process
+                 pbar.set_postfix_str(f"Processed: {stats['total_processed']}/{effective_max_samples_to_process}")
+
+
+            # Check if target number of rationales has been met
+            if max_samples is not None and (stats['generated_rationales_count'] + stats['rationalized_rationales_count'] >= max_samples):
+                print(f"\nTarget of {max_samples} rationales reached. Stopping collection.")
+                # Adjust tqdm if we break early
+                if pbar.n < pbar.total: # type: ignore
+                    pbar.update(pbar.total - pbar.n) # type: ignore
+                break
+
+            ground_truth = get_ground_truth(example, dataset_type)
+            if ground_truth is None:
+                if debug:
+                    print(f"Warning: Skipping example {start_index + current_idx} due to missing ground truth.")
+                stats['skipped_missing_gt'] += 1
+                if max_samples is None: pbar.update(1)
+                # If max_samples is not None, pbar updates based on collected rationales
+                continue
             
-            formatted_instance = format_for_finetuning(
+            stats['total_processed'] += 1
+            
+            # Step 3: Generate initial rationale without the answer
+            r_hat, y_hat = generate_rationale(
+                model=model,
+                tokenizer=tokenizer,
+                few_shot_prompt=few_shot_prompt,
                 question_data=example,
-                rationale=r_hat,
-                answer=ground_truth,
-                dataset_type=dataset_type
+                dataset_type=dataset_type,
+                max_new_tokens=MAX_NEW_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                top_k=TOP_K,
+                do_sample=DO_SAMPLE,
             )
             
-            if formatted_instance:
-                generated_rationales.append({
-                    'example_id': idx,
-                    'question': example,
-                    'rationale': r_hat,
-                    'answer': ground_truth,
-                    'formatted_text': formatted_instance,
-                    'source': 'generated'
-                })
-                stats['generated_rationales_count'] += 1
-            
-            if debug:
-                print(f"Debug: Example {idx} - Correct. Added to generated rationales.")
-        
-        else:
-            # Step 4 & 6: Rationalize failure and filter
-            if debug:
-                print(f"Debug: Example {idx} - Incorrect. Initial rationale NOT SAVED:")
-                print(f"  Initial rationale: {r_hat}")
-                print(f"  Attempting rationalization...")
-            
-            # Try multiple attempts to generate a valid rationalization
-            max_rationalization_attempts = 5
-            successful_rationalization = False
-            
-            for attempt in range(max_rationalization_attempts):
+            if r_hat is None or y_hat is None:
                 if debug:
-                    print(f"    Rationalization attempt {attempt + 1}/{max_rationalization_attempts}")
+                    print(f"Warning: Skipping example {start_index + current_idx} because initial rationale generation failed.")
+                stats['final_failures'] += 1
+                if max_samples is None: pbar.update(1)
+                # If max_samples is not None, pbar updates based on collected rationales
+                continue
+            
+            # Normalize answers for comparison
+            y_hat_norm = str(y_hat).strip().lower()
+            y_norm = str(ground_truth).strip().lower()
+            
+            # For numeric datasets, handle potential floating point differences
+            if dataset_type in ['gsm8k', 'arithmetic']:
+                try:
+                    y_hat_norm = str(int(float(y_hat_norm)))
+                    y_norm = str(int(float(y_norm)))
+                except ValueError:
+                    pass
+            
+            is_correct = (y_hat_norm == y_norm)
+            
+            if debug:
+                print(f"\n--- Generation Debug Example {start_index + current_idx} ---")
+                print(f"Ground Truth: {ground_truth}")
+                print(f"Generated Rationale: {r_hat}")
+                print(f"Generated Answer: {y_hat}")
+                print(f"Correct: {is_correct}")
+                print("----------------------------------------")
+            
+            if is_correct:
+                # Step 5: Keep successful self-generated rationale
+                stats['initial_correct'] += 1
                 
-                # Step 4: Generate rationalization with correct answer as hint
-                r_star = rationalize(
-                    model=model,
-                    tokenizer=tokenizer,
+                formatted_instance = format_for_finetuning(
                     question_data=example,
-                    correct_answer=ground_truth,
-                    dataset_type=dataset_type,
-                    max_new_tokens=MAX_NEW_TOKENS,
-                    temperature=TEMPERATURE,
-                    top_p=TOP_P,
-                    top_k=TOP_K,
-                    do_sample=DO_SAMPLE,
-                    few_shot_prompt=few_shot_prompt,
-                    debug=debug,
-                    attempt_number=attempt
+                    rationale=r_hat,
+                    answer=ground_truth,
+                    dataset_type=dataset_type
                 )
                 
-                if not r_star:
+                if formatted_instance:
+                    generated_rationales.append({
+                        'example_id': start_index + current_idx, # Use original index relative to start_index
+                        'question': example,
+                        'rationale': r_hat,
+                        'answer': ground_truth,
+                        'formatted_text': formatted_instance,
+                        'source': 'generated'
+                    })
+                    stats['generated_rationales_count'] += 1
+                    if max_samples is not None: pbar.update(1) # Update pbar for each collected rationale
+                
+                if debug:
+                    print(f"Debug: Example {start_index + current_idx} - Correct. Added to generated rationales.")
+            
+            else:
+                # Step 4 & 6: Rationalize failure and filter
+                if debug:
+                    print(f"Debug: Example {start_index + current_idx} - Incorrect. Initial rationale NOT SAVED:")
+                    print(f"  Initial rationale: {r_hat}")
+                    print(f"  Attempting rationalization...")
+                
+                # Try multiple attempts to generate a valid rationalization
+                max_rationalization_attempts = 5
+                successful_rationalization = False
+                
+                for attempt in range(max_rationalization_attempts):
                     if debug:
-                        print(f"    Attempt {attempt + 1} failed: empty rationalization")
-                    continue
-                
-                if debug:
-                    print(f"    Generated rationalization attempt {attempt + 1}: {r_star}")
-                
-                # Verify that the rationalization leads to the correct answer
-                verification_successful = verify_rationalization(
-                    model=model,
-                    tokenizer=tokenizer,
-                    question_data=example,
-                    rationale=r_star,
-                    expected_answer=ground_truth,
-                    dataset_type=dataset_type,
-                    few_shot_prompt=few_shot_prompt,
-                    debug=debug
-                )
-                
-                # Also check if the rationale shows quality reasoning
-                if verification_successful:
-                    quality_check = is_quality_rationale(r_star, dataset_type, debug=debug)
-                    if not quality_check:
-                        verification_successful = False
-                        if debug:
-                            print(f"    Attempt {attempt + 1} failed quality check - rationale is repetitive or low quality")
-                
-                if verification_successful:
-                    # Step 6: Keep successful rationalized explanation
-                    stats['rationalized_correct'] += 1
+                        print(f"    Rationalization attempt {attempt + 1}/{max_rationalization_attempts}")
                     
-                    formatted_instance = format_for_finetuning(
+                    # Step 4: Generate rationalization with correct answer as hint
+                    r_star = rationalize(
+                        model=model,
+                        tokenizer=tokenizer,
                         question_data=example,
-                        rationale=r_star,
-                        answer=ground_truth,
-                        dataset_type=dataset_type
+                        correct_answer=ground_truth,
+                        dataset_type=dataset_type,
+                        max_new_tokens=MAX_NEW_TOKENS,
+                        temperature=TEMPERATURE,
+                        top_p=TOP_P,
+                        top_k=TOP_K,
+                        do_sample=DO_SAMPLE,
+                        few_shot_prompt=few_shot_prompt,
+                        debug=debug,
+                        attempt_number=attempt
                     )
                     
-                    if formatted_instance:
-                        rationalized_rationales.append({
-                            'example_id': idx,
-                            'question': example,
-                            'rationale': r_star,
-                            'answer': ground_truth,
-                            'formatted_text': formatted_instance,
-                            'source': 'rationalized',
-                            'attempt_number': attempt + 1
-                        })
-                        stats['rationalized_rationales_count'] += 1
+                    if not r_star:
+                        if debug:
+                            print(f"    Attempt {attempt + 1} failed: empty rationalization")
+                        continue
                     
-                    successful_rationalization = True
                     if debug:
-                        print(f"    Attempt {attempt + 1} successful!")
-                    break
-                else:
+                        print(f"    Generated rationalization attempt {attempt + 1}: {r_star}")
+                    
+                    # Verify that the rationalization leads to the correct answer
+                    verification_successful = verify_rationalization(
+                        model=model,
+                        tokenizer=tokenizer,
+                        question_data=example,
+                        rationale=r_star,
+                        expected_answer=ground_truth,
+                        dataset_type=dataset_type,
+                        few_shot_prompt=few_shot_prompt,
+                        debug=debug
+                    )
+                    
+                    # Also check if the rationale shows quality reasoning
+                    if verification_successful:
+                        quality_check = is_quality_rationale(r_star, dataset_type, debug=debug)
+                        if not quality_check:
+                            verification_successful = False
+                            if debug:
+                                print(f"    Attempt {attempt + 1} failed quality check - rationale is repetitive or low quality")
+                    
+                    if verification_successful:
+                        # Step 6: Keep successful rationalized explanation
+                        stats['rationalized_correct'] += 1
+                        
+                        formatted_instance = format_for_finetuning(
+                            question_data=example,
+                            rationale=r_star,
+                            answer=ground_truth,
+                            dataset_type=dataset_type
+                        )
+                        
+                        if formatted_instance:
+                            rationalized_rationales.append({
+                                'example_id': start_index + current_idx, # Use original index
+                                'question': example,
+                                'rationale': r_star,
+                                'answer': ground_truth,
+                                'formatted_text': formatted_instance,
+                                'source': 'rationalized',
+                                'attempt_number': attempt + 1
+                            })
+                            stats['rationalized_rationales_count'] += 1
+                            if max_samples is not None: pbar.update(1) # Update pbar for each collected rationale
+                        
+                        successful_rationalization = True
+                        if debug:
+                            print(f"    Attempt {attempt + 1} successful!")
+                        break
+                    else:
+                        if debug:
+                            print(f"    Attempt {attempt + 1} failed verification")
+                
+                if not successful_rationalization:
+                    stats['final_failures'] += 1
                     if debug:
-                        print(f"    Attempt {attempt + 1} failed verification")
+                        print(f"    All rationalization attempts failed for example {start_index + current_idx}")
             
-            if not successful_rationalization:
-                stats['final_failures'] += 1
-                if debug:
-                    print(f"    All rationalization attempts failed for example {idx}")
+            if max_samples is None: # If not targeting rationales, update pbar per processed sample
+                pbar.update(1)
+            elif (stats['generated_rationales_count'] + stats['rationalized_rationales_count']) >= max_samples:
+                 # Ensure pbar reaches total if we hit the target exactly on the last item that could be processed
+                if pbar.n < pbar.total: # type: ignore
+                    pbar.update(pbar.total - pbar.n) # type: ignore
+                print(f"\nTarget of {max_samples} rationales reached during processing. Stopping collection.")
+                break
+        
+        # If loop finished but pbar hasn't reached its displayed total (especially if max_samples was high)
+        if pbar.n < pbar.total: # type: ignore
+            pbar.update(pbar.total - pbar.n) # type: ignore
     
     # Clean up model
     del model, tokenizer
@@ -580,8 +637,9 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, choices=['cqa', 'gsm8k', 'arithmetic'], required=True, help="Dataset type")
     parser.add_argument("--iteration", type=int, required=True, help="Current iteration number")
     parser.add_argument("--output_dir", type=str, required=True, help="Directory to save collected rationales")
-    parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of samples to process")
+    parser.add_argument("--max_samples", type=int, default=None, help="Target number of total rationales to collect (sum of generated and rationalized). If None, processes a default number of samples based on dataset type.")
     parser.add_argument("--debug", action="store_true", help="Enable debug printing")
+    parser.add_argument("--start_index", type=int, default=0, help="Index to start collecting samples from")
     
     args = parser.parse_args()
     
@@ -591,7 +649,8 @@ if __name__ == "__main__":
         iteration=args.iteration,
         output_dir=args.output_dir,
         max_samples=args.max_samples,
-        debug=args.debug
+        debug=args.debug,
+        start_index=args.start_index
     )
     
     print(f"\nCollection completed for iteration {args.iteration}") 
