@@ -5,6 +5,18 @@ import os
 from transformers import PreTrainedModel, PreTrainedTokenizer
 import random # Add random for selecting starter phrases
 
+# Helper function to get the correct device for DataParallel wrapped models
+def get_model_device(model: PreTrainedModel):
+    if isinstance(model, torch.nn.DataParallel):
+        return model.module.device
+    return model.device
+
+# Helper function to get the correct model for generation calls
+def get_model_for_generation(model: PreTrainedModel):
+    if isinstance(model, torch.nn.DataParallel):
+        return model.module
+    return model
+
 # Define config values directly in this file
 MAX_NEW_TOKENS = 128
 TEMPERATURE = 0.7
@@ -130,7 +142,7 @@ def score_cqa_answers(
     prompt_template = f"Q: {question}\n Answer Choices: {answer_choices_str}\n A: {rationale}\nTherefore, the correct answer is"
     
     # Tokenize the prompt template
-    template_tokens = tokenizer(prompt_template, return_tensors="pt").to(model.device)
+    template_tokens = tokenizer(prompt_template, return_tensors="pt").to(get_model_device(model))
     
     # Step 2: For each choice, compute the logits/logprobs
     choice_scores = []
@@ -140,12 +152,12 @@ def score_cqa_answers(
         completion = f" {text} ({label})."
         
         # Tokenize and get token IDs for the completion
-        completion_tokens = tokenizer(completion, add_special_tokens=False, return_tensors="pt").to(model.device)
+        completion_tokens = tokenizer(completion, add_special_tokens=False, return_tensors="pt").to(get_model_device(model))
         completion_ids = completion_tokens.input_ids[0]
         
         # Get logits for the prompt
         with torch.no_grad():
-            outputs = model(**template_tokens)
+            outputs = get_model_for_generation(model)(**template_tokens)
             
         # Get the last token's logits as our starting point
         next_token_logits = outputs.logits[0, -1, :]
@@ -161,9 +173,9 @@ def score_cqa_answers(
             
             # Update for next position (simulate auto-regressive generation)
             inputs = torch.cat([template_tokens.input_ids, 
-                               torch.tensor([[token_id]]).to(model.device)], dim=1)
+                               torch.tensor([[token_id]]).to(get_model_device(model))], dim=1)
             with torch.no_grad():
-                outputs = model(inputs)
+                outputs = get_model_for_generation(model)(inputs)
             next_token_logits = outputs.logits[0, -1, :]
         
         # Store score for this choice
@@ -358,7 +370,7 @@ def generate_rationale(
         torch.cuda.manual_seed_all(SEED)
     
     full_prompt = few_shot_prompt + "\n\n" + format_question(question_data, dataset_type)
-    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(get_model_device(model))
 
     # Adjust sampling parameters based on temperature
     gen_kwargs = {
@@ -381,7 +393,7 @@ def generate_rationale(
         # Don't set temperature, top_p, top_k when not sampling to avoid warnings
 
     with torch.no_grad():
-        outputs = model.generate(**inputs, **gen_kwargs)
+        outputs = get_model_for_generation(model).generate(**inputs, **gen_kwargs)
 
     # Decode only the generated part
     # Handle potential warning about exceeding max length by truncating the input_ids passed to decode
@@ -552,7 +564,7 @@ def rationalize(
     #     print(full_prompt)
     #     print("===================================================")
 
-    inputs = tokenizer(full_prompt, return_tensors="pt").to(model.device)
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(get_model_device(model))
 
     # Adjust sampling parameters (same logic as generate_rationale)
     gen_kwargs = {
@@ -574,7 +586,7 @@ def rationalize(
         gen_kwargs["do_sample"] = False
 
     with torch.no_grad():
-        outputs = model.generate(**inputs, **gen_kwargs)
+        outputs = get_model_for_generation(model).generate(**inputs, **gen_kwargs)
 
     # Decode only the generated part (the rationalization)
     output_token_ids = outputs[0][inputs.input_ids.shape[1]:]

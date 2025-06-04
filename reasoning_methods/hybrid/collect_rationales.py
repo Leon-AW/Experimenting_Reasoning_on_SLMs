@@ -24,6 +24,8 @@ from prompting import (
     DO_SAMPLE, 
     MAX_NEW_TOKENS,
     SEED,
+    get_model_device,
+    get_model_for_generation
 )
 from prepare_datasets import load_commonsense_qa, load_gsm8k, generate_arithmetic_dataset
 
@@ -71,7 +73,7 @@ def load_model_and_tokenizer(model_id_or_path):
     model = AutoModelForCausalLM.from_pretrained(
         model_id_or_path,
         torch_dtype=torch.bfloat16,
-        device_map="auto",
+        # device_map="auto", # Replaced for DataParallel
         trust_remote_code=True
     )
     tokenizer = AutoTokenizer.from_pretrained(model_id_or_path, trust_remote_code=True)
@@ -79,6 +81,16 @@ def load_model_and_tokenizer(model_id_or_path):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
+
+    # Use DataParallel for multi-GPU
+    if torch.cuda.is_available():
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs via DataParallel.")
+            model = torch.nn.DataParallel(model)
+        model.to(torch.device("cuda")) # Move model to GPU(s)
+    else:
+        print("CUDA not available. Using CPU.")
+        model.to(torch.device("cpu"))
 
     return model, tokenizer
 
@@ -489,10 +501,10 @@ def verify_rationalization(model, tokenizer, question_data, rationale, expected_
                 else:  # arithmetic
                     verification_prompt = f"{format_question(question_data, dataset_type)}\n{rationale}\n\nFinal answer:"
                 
-                verification_inputs = tokenizer(verification_prompt, return_tensors="pt").to(model.device)
+                verification_inputs = tokenizer(verification_prompt, return_tensors="pt").to(get_model_device(model))
                 
                 with torch.no_grad():
-                    verification_outputs = model.generate(
+                    verification_outputs = get_model_for_generation(model).generate(
                         **verification_inputs,
                         max_new_tokens=30,
                         do_sample=False,
