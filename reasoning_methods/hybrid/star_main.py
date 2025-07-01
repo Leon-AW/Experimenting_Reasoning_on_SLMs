@@ -28,6 +28,9 @@ from prepare_datasets import load_commonsense_qa, load_gsm8k, generate_arithmeti
 from collect_rationales import collect_rationales_for_iteration, load_few_shot_prompt, get_ground_truth, load_model_and_tokenizer
 from finetune import finetune_model
 
+# Get script directory to use for default paths
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Configuration
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B"
 DATA_CACHE_DIR = './data_cache'
@@ -162,8 +165,8 @@ def run_star_process(
     num_iterations: int = NUM_STAR_ITERATIONS,
     max_samples: int = None,
     debug: bool = False,
-    rationales_output_dir: str = "collected_rationales",
-    models_output_dir: str = "star_models",
+    rationales_output_dir: str = os.path.join(SCRIPT_DIR, "collected_rationales"),
+    models_output_dir: str = os.path.join(SCRIPT_DIR, "star_models"),
     evaluate_each_iteration: bool = True,
     start_index: int = 0
 ):
@@ -352,9 +355,9 @@ if __name__ == "__main__":
                        help="Target number of total rationales to collect per iteration (sum of generated and rationalized). If None, processes a default number of samples based on dataset type.")
     parser.add_argument("--debug", action="store_true",
                        help="Enable debug printing")
-    parser.add_argument("--rationales_dir", type=str, default="collected_rationales",
+    parser.add_argument("--rationales_dir", type=str, default=os.path.join(SCRIPT_DIR, "collected_rationales"),
                        help="Directory to save collected rationales")
-    parser.add_argument("--models_dir", type=str, default="star_models",
+    parser.add_argument("--models_dir", type=str, default=os.path.join(SCRIPT_DIR, "star_models"),
                        help="Directory to save fine-tuned models")
     parser.add_argument("--no_eval", action="store_true",
                        help="Skip evaluation after each iteration")

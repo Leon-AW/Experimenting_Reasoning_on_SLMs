@@ -17,6 +17,9 @@ import sys
 # Add parent directory to path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Get script directory to use for default paths
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Configuration
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
@@ -242,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("--rationales_dir", type=str, required=True, help="Directory containing collected rationales")
     parser.add_argument("--dataset", type=str, choices=['cqa', 'gsm8k', 'arithmetic'], required=True, help="Dataset type")
     parser.add_argument("--iteration", type=int, required=True, help="Current iteration number")
-    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save fine-tuned model")
+    parser.add_argument("--output_dir", type=str, default=os.path.join(SCRIPT_DIR, "star_models"), help="Directory to save fine-tuned model")
     parser.add_argument("--num_train_steps", type=int, default=None, help="Number of training steps (default: calculated from iteration)")
     parser.add_argument("--debug", action="store_true", help="Enable debug printing")
     

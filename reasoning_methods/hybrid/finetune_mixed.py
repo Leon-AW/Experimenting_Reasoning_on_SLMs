@@ -18,6 +18,9 @@ import sys
 # Add parent directory to path to import config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Get script directory to use for default paths
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Configuration
 BASE_MODEL_ID = "meta-llama/Llama-3.2-1B"
 
@@ -195,11 +198,11 @@ def finetune_mixed_model(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune a model on a mixed set of STaR rationales.")
-    parser.add_argument("--rationales_dir", type=str, default="reasoning_methods/hybrid/collected_rationales",
+    parser.add_argument("--rationales_dir", type=str, default=os.path.join(SCRIPT_DIR, "collected_rationales"),
                         help="Directory containing collected rationales")
     parser.add_argument("--iteration", type=int, default=1,
                         help="Iteration number to load rationales from")
-    parser.add_argument("--output_dir", type=str, default="star_models/mixed_model_iter1",
+    parser.add_argument("--output_dir", type=str, default=os.path.join(SCRIPT_DIR, "star_models", "mixed_model_iter1"),
                         help="Directory to save the fine-tuned mixed-task model")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug printing")

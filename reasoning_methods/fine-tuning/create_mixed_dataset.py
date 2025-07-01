@@ -2,18 +2,16 @@
 import random
 from datasets import load_dataset, concatenate_datasets, DatasetDict
 
-# --- Konfiguration ---
-OUTPUT_DIR = "reasoning_methods/fine-tuning/mixed_finetuning_dataset" # Ordner zum Speichern des Datensatzes
-TARGET_TOTAL_SAMPLES = 300000 # Ungefähre Gesamtgröße des gemischten Datensatzes
-VALIDATION_SPLIT_PERCENTAGE = 0.05 # 5% für Validierung
 
-# Definition der Datensätze und wie viele Beispiele wir wollen
-# Passe 'target_samples' an, um die Mischung zu steuern
+OUTPUT_DIR = "reasoning_methods/fine-tuning/mixed_finetuning_dataset"
+TARGET_TOTAL_SAMPLES = 300000
+VALIDATION_SPLIT_PERCENTAGE = 0.05
+
 DATASET_CONFIG = [
     {
         "name": "Open-Orca/SlimOrca-Dedup",
         "split": "train",
-        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.40), # 40%
+        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.425), # 42.5%
         "formatting_func": "format_slimorca",
     },
     {
@@ -39,31 +37,18 @@ DATASET_CONFIG = [
     {
         "name": "meta-math/MetaMathQA",
         "split": "train",
-        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.10), # 10%
+        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.125), # 12.5%
         "formatting_func": "format_metamathqa",
     },
      {
         "name": "squad",
         "split": "train",
-        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.075), # 7.5%
+        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.10), # 10%
         "formatting_func": "format_squad",
-    },
-    {
-        "name": "truthful_qa",
-        "subset": "generation",
-        "split": "validation", # Ja, 'validation' als Trainingsdaten hier
-        "target_samples": int(TARGET_TOTAL_SAMPLES * 0.075), # 7.5%
-        "formatting_func": "format_truthful_qa",
     },
 ]
 
-# --- Formatierungsfunktionen (Anpassung an ChatML-ähnliches Format) ---
-# Zielformat: {'messages': [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]}
-
 def format_slimorca(example):
-    # SlimOrca ist oft schon in einem Konversationsformat
-    # Wir nehmen an, es hat 'conversations' mit 'from' ('human'/'gpt') und 'value'
-    # Passe Schlüssel und Rollen an das Zielformat an
     if 'conversations' in example and isinstance(example['conversations'], list):
         messages = []
         for msg in example['conversations']:
@@ -73,73 +58,56 @@ def format_slimorca(example):
                 messages.append({'role': 'user', 'content': value})
             elif role == 'gpt':
                 messages.append({'role': 'assistant', 'content': value})
-            # Ignoriere andere Rollen wie 'system' hier vorerst,
-            # oder füge sie hinzu, falls vom SFT-Setup unterstützt/gewünscht
-            # elif role == 'system':
-            #     messages.append({'role': 'system', 'content': value})
 
-        # Stelle sicher, dass es mit user beginnt und mit assistant endet (optional, aber oft sinnvoll)
         if messages and messages[0].get('role') == 'user' and messages[-1].get('role') == 'assistant':
             return {"messages": messages}
-    return None # Ignoriere Beispiele, die nicht passen
+    return None
 
 def format_arc(example):
     question = example['question']
     choices_text = "\\n".join([f"{label}. {text}" for label, text in zip(example['choices']['label'], example['choices']['text'])])
-    prompt = f"{question}\\n\\nWähle die korrekte Antwort aus den folgenden Optionen:\\n{choices_text}"
-    answer = example['answerKey'] # Nur der Buchstabe A, B, C, D etc.
-    # Finde den Text zur Antwort
+    prompt = f"{question}\\n\\nChoose the correct answer from the following options:\\n{choices_text}"
+    answer = example['answerKey']
+    
     try:
         answer_text = example['choices']['text'][example['choices']['label'].index(answer)]
         full_answer = f"{answer}. {answer_text}"
     except (ValueError, IndexError):
-        full_answer = answer # Fallback auf den Key selbst
+        full_answer = answer
 
     return {"messages": [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': full_answer}]}
 
 def format_commonsense_qa(example):
     question = example['question']
     choices_text = "\\n".join([f"{label}. {text}" for label, text in zip(example['choices']['label'], example['choices']['text'])])
-    prompt = f"{question}\\n\\nWähle die beste Antwort aus den folgenden Optionen:\\n{choices_text}"
-    answer = example.get('answerKey', '') # Manchmal fehlt der Key? Sicherstellen, dass er da ist.
-    # Finde den Text zur Antwort
+    prompt = f"{question}\\n\\nChoose the best answer from the following options:\\n{choices_text}"
+    answer = example.get('answerKey', '')
     try:
         answer_text = example['choices']['text'][example['choices']['label'].index(answer)]
         full_answer = f"{answer}. {answer_text}"
     except (ValueError, IndexError):
-        full_answer = answer # Fallback auf den Key selbst
-    if not answer: return None # Ignoriere Beispiele ohne Antwortkey
+        full_answer = answer
+    if not answer: return None
     return {"messages": [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': full_answer}]}
 
 
 def format_gsm8k(example):
-    # Nutzt die Chain-of-Thought Antwort
     question = example['question']
-    answer = example['answer'] # Enthält oft "Lösung: ..."
+    answer = example['answer']
     return {"messages": [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer}]}
 
 def format_metamathqa(example):
-    # MetaMath hat oft 'query' und 'response'
     question = example['query']
     answer = example['response']
     return {"messages": [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer}]}
 
 def format_squad(example):
-    # Wir brauchen Kontext, Frage und Antwort
     context = example['context']
     question = example['question']
-    # Nimm die erste Antwort, SQuAD kann mehrere haben
-    answer = example['answers']['text'][0] if example['answers']['text'] else "Keine Antwort gefunden."
-    prompt = f"Kontext:\\n{context}\\n\\nFrage:\\n{question}\\n\\nAntworte basierend auf dem Kontext."
+    answer = example['answers']['text'][0] if example['answers']['text'] else "No answer found."
+    prompt = f"Context:\\n{context}\\n\\nQuestion:\\n{question}\\n\\nAnswer based on the context."
     return {"messages": [{'role': 'user', 'content': prompt}, {'role': 'assistant', 'content': answer}]}
 
-def format_truthful_qa(example):
-    # Nutzt Frage und die beste Antwort
-    question = example['question']
-    answer = example['best_answer']
-    return {"messages": [{'role': 'user', 'content': question}, {'role': 'assistant', 'content': answer}]}
-
-# Mapping von Funktionsnamen (Strings) zu tatsächlichen Funktionen
 FORMATTERS = {
     "format_slimorca": format_slimorca,
     "format_arc": format_arc,
@@ -147,70 +115,59 @@ FORMATTERS = {
     "format_gsm8k": format_gsm8k,
     "format_metamathqa": format_metamathqa,
     "format_squad": format_squad,
-    "format_truthful_qa": format_truthful_qa,
 }
 
-# --- Hauptlogik ---
 all_formatted_samples = []
 
-print("Starte Download und Formatierung der Datensätze...")
+print("Starting download and formatting of datasets...")
 
 for config in DATASET_CONFIG:
-    print(f"Verarbeite {config['name']} ({config.get('subset', 'default')})...")
+    print(f"Processing {config['name']} ({config.get('subset', 'default')})...")
     try:
-        # Lade den Datensatz
-        ds = load_dataset(config['name'], name=config.get('subset'), split=config['split'], streaming=False) # Nicht streamen für select
+        ds = load_dataset(config['name'], name=config.get('subset'), split=config['split'], streaming=False)
 
-        # Wähle zufällige Beispiele (falls der Datensatz größer ist als benötigt)
         num_available = len(ds)
-        target_samples = min(config['target_samples'], num_available)
-        if num_available > target_samples:
-             indices = random.sample(range(num_available), target_samples)
+        target_samples_for_ds = min(config['target_samples'], num_available)
+
+        if num_available > target_samples_for_ds:
+             indices = random.sample(range(num_available), target_samples_for_ds)
              ds = ds.select(indices)
-        else:
-             print(f"Warnung: Konnte nur {num_available} statt der gewünschten {target_samples} Beispiele für {config['name']} laden.")
+        elif num_available < config['target_samples']:
+             print(f"Warning: Could only load {num_available} of the desired {config['target_samples']} samples for {config['name']}.")
 
 
-        # Wende die Formatierungsfunktion an
         formatting_func = FORMATTERS[config['formatting_func']]
-        formatted_ds = ds.map(formatting_func, remove_columns=ds.column_names, num_proc=4) # Parallelisierung
+        formatted_ds = ds.map(formatting_func, remove_columns=ds.column_names, num_proc=4)
 
-        # Filtere Beispiele heraus, bei denen die Formatierung fehlgeschlagen ist (None zurückgegeben hat)
         formatted_ds = formatted_ds.filter(lambda example: example is not None and example.get('messages') is not None)
-        # Filtere Beispiele ohne Antwort
         formatted_ds = formatted_ds.filter(lambda example: len(example['messages']) > 0 and example['messages'][-1]['role'] == 'assistant' and example['messages'][-1]['content'])
 
 
-        print(f"-> {len(formatted_ds)} formatierte Beispiele hinzugefügt.")
+        print(f"-> Added {len(formatted_ds)} formatted samples.")
         all_formatted_samples.append(formatted_ds)
 
     except Exception as e:
-        print(f"Fehler beim Verarbeiten von {config['name']}: {e}")
+        print(f"Error processing {config['name']}: {e}")
 
-# Kombiniere alle formatierten Datensätze
-print("\nKombiniere alle Datensätze...")
+print("\nCombining all datasets...")
 if not all_formatted_samples:
-     raise ValueError("Keine Datensätze konnten erfolgreich geladen und formatiert werden.")
+     raise ValueError("No datasets could be successfully loaded and formatted.")
 
 mixed_dataset = concatenate_datasets(all_formatted_samples)
 
-# Mische den kombinierten Datensatz gründlich
-print(f"Mische den Datensatz ({len(mixed_dataset)} Beispiele)...")
+print(f"Shuffling the dataset ({len(mixed_dataset)} samples)...")
 mixed_dataset = mixed_dataset.shuffle(seed=42)
 
-# Erstelle Train/Validation Split
-print(f"Erstelle Train/Validation Split ({100-VALIDATION_SPLIT_PERCENTAGE*100}% / {VALIDATION_SPLIT_PERCENTAGE*100}%)...")
+print(f"Creating Train/Validation Split ({100-VALIDATION_SPLIT_PERCENTAGE*100}% / {VALIDATION_SPLIT_PERCENTAGE*100}%)...")
 split_dataset = mixed_dataset.train_test_split(test_size=VALIDATION_SPLIT_PERCENTAGE, seed=42)
 
-# Umbenennen für Konsistenz (SFTTrainer erwartet oft 'train' und 'test' oder 'validation')
 split_dataset["validation"] = split_dataset.pop("test")
 
-print(f"Finaler Trainings-Split: {len(split_dataset['train'])} Beispiele")
-print(f"Finaler Validierungs-Split: {len(split_dataset['validation'])} Beispiele")
+print(f"Final training split: {len(split_dataset['train'])} samples")
+print(f"Final validation split: {len(split_dataset['validation'])} samples")
 
-# Speichere den Datensatz auf der Festplatte
-print(f"Speichere Datensatz nach '{OUTPUT_DIR}'...")
+print(f"Saving dataset to '{OUTPUT_DIR}'...")
 split_dataset.save_to_disk(OUTPUT_DIR)
 
-print("\nFertig! Der gemischte Datensatz wurde erstellt und gespeichert.")
-print(f"Du kannst ihn jetzt im SFT-Skript mit `--dataset_name {OUTPUT_DIR}` verwenden.")
+print("\nDone! The mixed dataset has been created and saved.")
+print(f"You can now use it in the SFT script with `--dataset_name {OUTPUT_DIR}`.")

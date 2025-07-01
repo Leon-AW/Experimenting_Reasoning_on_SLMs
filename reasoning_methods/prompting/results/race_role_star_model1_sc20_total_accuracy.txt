@@ -1,0 +1,21 @@
+Final Accuracy of role on race (self-consistency: True): 34.20%
+Total Correct Answers: 342/1000 Questions
+
+Unextracted Answers: 0 samples
+
+Hyperparameters:
+Model: star_models/star_model1/final_model
+Batch Size: 272
+Number of GPUs: 3
+Max Memory per GPU: {0: 75000000000, 1: 75000000000, 2: 75000000000, 'cpu': 8000000000}
+Min New Tokens: 1
+Max New Tokens: 256
+Temperature: 0.5
+Top P: 0.9
+Top K: 0
+Do Sample: True
+Number of Return Sequences: 1
+Self Consistency: True
+Self Consistency Paths: 20
+Device: cuda
+Random Seed: 42

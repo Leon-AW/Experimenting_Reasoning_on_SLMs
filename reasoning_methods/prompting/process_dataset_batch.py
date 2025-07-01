@@ -17,7 +17,7 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
     pointer = 0
 
     # Define which datasets are numeric vs. multiple-choice.
-    multiple_choice_datasets = ["race", "arc", "mmlu", "agieval"]
+    multiple_choice_datasets = ["race", "arc", "mmlu", "agieval", "commonsense_qa"]
 
     # Store batch_size in args for access in processor functions
     args.batch_size = batch_size
@@ -41,7 +41,11 @@ def process_dataset_batch(pipe, dataset, template_name, args, batch_size):
             pointer += 1
 
         if args.dataset in multiple_choice_datasets:
-            mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+            if args.dataset == "commonsense_qa":
+                mapping = {"A": "0", "B": "1", "C": "2", "D": "3", "E": "4"}
+            else:
+                mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
+
             if args.self_consistency:
                 corr, tot, batch_results = multiple_choice_processor.process_mc_self_consistency(
                     pipe, dataset, template_name, args, batch_indices, mapping

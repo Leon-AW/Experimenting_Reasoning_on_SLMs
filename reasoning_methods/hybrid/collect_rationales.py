@@ -73,7 +73,6 @@ def load_model_and_tokenizer(model_id_or_path):
     model = AutoModelForCausalLM.from_pretrained(
         model_id_or_path,
         torch_dtype=torch.bfloat16,
-        # device_map="auto", # Replaced for DataParallel
         trust_remote_code=True
     )
     tokenizer = AutoTokenizer.from_pretrained(model_id_or_path, trust_remote_code=True)
@@ -648,7 +647,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_path", type=str, required=True, help="Path to the model to use for generation")
     parser.add_argument("--dataset", type=str, choices=['cqa', 'gsm8k', 'arithmetic'], required=True, help="Dataset type")
     parser.add_argument("--iteration", type=int, required=True, help="Current iteration number")
-    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save collected rationales")
+    parser.add_argument("--output_dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "collected_rationales"), help="Directory to save collected rationales")
     parser.add_argument("--max_samples", type=int, default=None, help="Target number of total rationales to collect (sum of generated and rationalized). If None, processes a default number of samples based on dataset type.")
     parser.add_argument("--debug", action="store_true", help="Enable debug printing")
     parser.add_argument("--start_index", type=int, default=0, help="Index to start collecting samples from")

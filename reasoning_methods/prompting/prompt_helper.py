@@ -12,7 +12,7 @@ def format_prompt(template_name, dataset_type, question, options=None, passage=N
     """Format prompt according to template and dataset type."""
     
     # Get the correct template
-    if dataset_type in ["race", "arc", "mmlu", "agieval"]:
+    if dataset_type in ["race", "arc", "mmlu", "agieval", "commonsense_qa"]:
         template = PROMPT_TEMPLATES[template_name]["multiple_choice"]
     else:
         template = PROMPT_TEMPLATES[template_name]["numeric"]

@@ -1,0 +1,21 @@
+Final Accuracy of role on commonsense_qa: 55.50%
+Total Correct Answers: 555/1000 Questions
+
+Unextracted Answers: 0 samples
+
+Hyperparameters:
+Model: reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Mixed-Reasoning/checkpoint-2000
+Batch Size: 136
+Number of GPUs: 1
+Max Memory per GPU: {0: 1048576, 1: 1048576, 2: 79456894976, 'cpu': 8000000000}
+Min New Tokens: 1
+Max New Tokens: 256
+Temperature: 0.5
+Top P: 0.9
+Top K: 0
+Do Sample: True
+Number of Return Sequences: 1
+Self Consistency: True
+Self Consistency Paths: 20
+Device: cuda
+Random Seed: 42

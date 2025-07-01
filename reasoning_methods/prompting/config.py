@@ -49,12 +49,12 @@ DATASET_CONFIGS = {
         "question_key": "question",
         "answer_key": "answers_spans"
     },
-    "gsm8k_2": {
-    "name": "gsm8k",
-    "split": "main",
-    "subset": "train",
-    "question_key": "question",
-    "answer_key": "answer"
+    "commonsense_qa": {
+        "name": "commonsense_qa",
+        "split": "default",
+        "subset": "validation",
+        "question_key": "question",
+        "answer_key": "answerKey"
     }
 }
 
@@ -67,7 +67,7 @@ PROMPT_TEMPLATES = {
     # },
     "simple": {
         "numeric": """Problem: {question}\nSolution: """,
-        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\n"""
+        "multiple_choice": """Question: {question}\n\nOptions:\n{options}\n\nAnswer:"""
     },
     # Large Language Models are Zero-Shot Reasoners: https://arxiv.org/abs/2205.11916
     "cot": {

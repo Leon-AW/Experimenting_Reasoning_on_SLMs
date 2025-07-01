@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import random
 
-def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
+def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0, mapping=None):
     """
     Given a prompt and a list of candidate options, compute the log likelihood
     of each candidate answer when appended (after an "Answer:" marker) to the prompt.
@@ -16,7 +16,7 @@ def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
     If temperature > 0, introduces randomness for self-consistency sampling.
     """
     # Ensure the prompt ends with an "Answer:" line.
-    if not prompt.strip().endswith("Answer: "):
+    if not prompt.strip().endswith("Answer:"):
         base_context = prompt.strip() + "\nThe correct answer is: "
     else:
         base_context = prompt.strip()
@@ -52,12 +52,15 @@ def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
         loglikelihood = -total_loss  
         scores[letter] = loglikelihood
 
-    # If temperature is 0, just return the highest scoring option
+    # Convert scores to probabilities and select an answer
+    logits = np.array([scores[letter] for letter in candidate_letters])
+    
     if temperature == 0.0:
         best_letter = max(scores, key=scores.get)
+        exp_logits = np.exp(logits - np.max(logits))
+        probs = exp_logits / exp_logits.sum()
+        best_prob = np.max(probs)
     else:
-        # Convert scores to probabilities using softmax with temperature
-        logits = np.array([scores[letter] for letter in candidate_letters])
         # Apply temperature scaling
         logits = logits / temperature
         # Softmax to get probabilities
@@ -66,14 +69,18 @@ def get_mc_pred_answer(prompt, options, model, tokenizer, temperature=0.0):
         # Sample from the distribution
         choice_idx = np.random.choice(len(candidate_letters), p=probs)
         best_letter = candidate_letters[choice_idx]
+        best_prob = probs[choice_idx]
     
     # Convert candidate letter to a numeric string.
-    mapping = {"A": "0", "B": "1", "C": "2", "D": "3"}
-    return mapping.get(best_letter, best_letter)
+    if mapping is None:
+        mapping = {"A": "0", "B": "1", "C": "2", "D": "3", "E": "4"}
+    
+    pred_answer = mapping.get(best_letter, best_letter)
+    return pred_answer, best_prob
 
 def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indices, mapping):
     """
-    Process multiple-choice datasets using self-consistency.
+    Process multiple-choice datasets using self-consistency with confidence-weighted voting.
     Loops over sample_indices and obtains multiple self-consistent answers via log-likelihood scoring.
     """
     # Set seeds for reproducibility
@@ -87,7 +94,7 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
     total = 0
     results = []
 
-    for idx in tqdm(sample_indices, desc=f"Processing {template_name} (Self-Consistency Log Likelihood)"):
+    for idx in tqdm(sample_indices, desc=f"Processing {template_name} (Confidence-Weighted SC)"):
         try:
             example = dataset[idx]
             question = example[DATASET_CONFIGS[args.dataset]["question_key"]]
@@ -103,7 +110,7 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
             if args.dataset == "race":
                 options = example.get("options", [])
                 passage = example.get("article", "") or example.get("passage", "")
-            elif args.dataset == "arc":
+            elif args.dataset in ["arc", "commonsense_qa"]:
                 choices = example.get("choices", {})
                 if isinstance(choices, dict) and "text" in choices:
                     options = choices["text"]
@@ -119,20 +126,28 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
             formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
 
             # Run self-consistency paths using log-likelihood with temperature.
-            sc_answers = []
+            sc_results = []
             for _ in range(SELF_CONSISTENCY_PATHS):
-                pred = get_mc_pred_answer(
-                    formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE
-                ) if options else None
+                pred, prob = get_mc_pred_answer(
+                    formatted_prompt, options, pipe.model, pipe.tokenizer, temperature=TEMPERATURE, mapping=mapping
+                ) if options else (None, None)
                 if pred is not None:
-                    sc_answers.append(pred)
+                    sc_results.append((pred, prob))
 
-            # Majority vote of the self-consistency answers.
-            if sc_answers:
-                counts = Counter(sc_answers)
-                pred_answer = counts.most_common(1)[0][0]
+            # Confidence-weighted majority vote.
+            if sc_results:
+                weighted_scores = {}
+                for answer, prob in sc_results:
+                    weighted_scores[answer] = weighted_scores.get(answer, 0) + prob
+                
+                pred_answer = max(weighted_scores, key=weighted_scores.get)
+                
+                # Calculate confidence as the normalized score of the predicted answer
+                total_prob = sum(weighted_scores.values())
+                confidence = weighted_scores[pred_answer] / total_prob if total_prob > 0 else 0
             else:
                 pred_answer = None
+                confidence = 0.0
 
             is_correct = False
             if pred_answer is not None and gold_answer is not None:
@@ -146,17 +161,19 @@ def process_mc_self_consistency(pipe, dataset, template_name, args, sample_indic
                 "sample_index": idx,
                 "question": question,
                 "prompt": formatted_prompt,
-                "generated_text": f"Self-consistency answers: {sc_answers}",
+                "generated_text": f"Self-consistency results: {sc_results}",
                 "pred_answer": pred_answer,
                 "gold_answer": gold_answer,
-                "is_correct": is_correct
+                "is_correct": is_correct,
+                "confidence": confidence,
+                "sc_paths": str([res[0] for res in sc_results])
             })
 
             if args.debug:
                 print(f"\nSample index {idx}:")
                 print(f"Prompt: {formatted_prompt}")
-                print(f"Self-consistency answers: {sc_answers}")
-                print(f"Predicted answer: {pred_answer}")
+                print(f"Self-consistency results: {sc_results}")
+                print(f"Predicted answer: {pred_answer} (Confidence: {confidence:.2f})")
                 print(f"Gold answer: {gold_answer}")
                 print(f"Correct: {is_correct}")
 
@@ -196,12 +213,10 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
             if args.dataset == "race":
                 options = example.get("options", [])
                 passage = example.get("article", "") or example.get("passage", "")
-            elif args.dataset == "arc":
+            elif args.dataset in ["arc", "commonsense_qa"]:
                 choices = example.get("choices", {})
                 if isinstance(choices, dict) and "text" in choices:
                     options = choices["text"]
-                else:
-                    continue
             elif args.dataset == "mmlu":
                 options = example.get("choices")
                 if not options:
@@ -211,9 +226,9 @@ def process_mc_regular(pipe, dataset, template_name, args, sample_indices, mappi
 
             formatted_prompt = format_prompt(template_name, args.dataset, question, options, passage)
             # Use single-pass log likelihood scoring.
-            pred_answer = get_mc_pred_answer(
-                formatted_prompt, options, pipe.model, pipe.tokenizer
-            ) if options else None
+            pred_answer, _ = get_mc_pred_answer(
+                formatted_prompt, options, pipe.model, pipe.tokenizer, mapping=mapping
+            ) if options else (None, None)
 
             is_correct = False
             if pred_answer is not None and gold_answer is not None:
