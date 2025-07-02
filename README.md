@@ -6,14 +6,93 @@ This repository contains the study project "Robustness Testing and Comparing Rea
 
 The primary goal of this project was to explore and evaluate methods to improve the reasoning capabilities of Small Language Models (SLMs). As described in the project exposé, we investigated three distinct approaches:
 
-1.  **Prompting and In-Context Learning:** Utilizing techniques like Chain-of-Thought (CoT) and Self-Consistency on pre-trained models without further finetuning.
-2.  **Multi-Stage Finetuning:** Finetuning the base model on various instruction and reasoning datasets, inspired by the Orca 2 paper.
+1.  **Prompting:** Utilizing techniques like Chain-of-Thought (CoT) and Self-Consistency on pre-trained models without further finetuning.
+2.  **Multi-Stage Finetuning:** Finetuning the base model on various reasoning datasets, inspired by the Orca 2 paper.
 3.  **Hybrid Method (STaR):** A hybrid approach combining finetuning and prompting, where the model is finetuned on its own generated reasoning steps (rationales).
 
 The core research questions were:
 - Can reasoning techniques substantially improve the performance of a 1B model?
 - Are these improvements sufficient to match or exceed the performance of a larger 3B model?
 - Which approaches are most effective?
+
+## Prompting Strategies
+
+The following prompt templates were used to guide the model's reasoning process.
+
+### Simple Prompt
+*   **Numeric:**
+    ```
+    Problem: {question}
+    Solution: 
+    ```
+*   **Multiple Choice:**
+    ```
+    Question: {question}
+
+    Options:
+    {options}
+
+    Answer:
+    ```
+
+### Chain-of-Thought (CoT)
+*   **Numeric:**
+    ```
+    Problem: {question}
+
+    Solve and conclude your solution with 'The final answer is: <insert your answer here>'.
+
+    Let's think step by step: 
+    ```
+*   **Multiple Choice:**
+    ```
+    Question: {question}
+
+    Options:
+    {options}
+
+    Let's think step by step: 
+    ```
+
+### Role-Setting Prompt
+*   **Numeric:**
+    ```
+    User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
+    Assistant: That's great to hear! As your math teacher, I'll do my best to explain mathematical concepts correctly so that you can understand them easily. Finally I will conclude it with 'The final answer is: <insert your answer here>'. Feel free to ask any math problems or questions you have, and I'll be glad to assist you.
+    User: {question}
+    Assistant: 
+    ```
+*   **Multiple Choice:**
+    ```
+    User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
+    Assistant: That's great to hear! As your math teacher, I'll do my best to explain mathematical concepts correctly so that you can understand them easily. Feel free to ask any math problems or questions you have, and I'll be glad to assist you.
+    User: {question}
+    Options:
+    {options}
+    Assistant: 
+    ```
+
+### Plan-and-Solve Prompt
+*   **Numeric:**
+    ```
+    Problem: {question}
+
+    Let's first understand the problem, extract relevant variables and their corresponding numerals, and devise a plan. Then, let's carry out the plan, calculate intermediate results (pay attention to calculation and common sense), solve the problem step by step, and then conclude it with 'The final answer is: <insert your answer here>'.
+            Let's begin: 
+    ```
+*   **Multiple Choice:**
+    ```
+    Question: {question}
+
+    Options:
+    {options}
+
+    Let's approach this systematically:
+    1. First, let's understand the question
+    2. Then, analyze each option carefully
+    3. Finally, choose the highest probability answer. 
+            Let's begin: 
+    ```
 
 ## Experimental Setup
 
@@ -28,6 +107,42 @@ The core research questions were:
 - **`1b-sft-full` / `1b-sft-full-slimorca-100k` / `1b-sft-lora-all`**: Models finetuned on the SlimOrca dataset with different configurations.
 - **`1b-sft-mixed-best`**: A 1B model finetuned on a carefully curated mix of datasets, including SlimOrca (42.5%), ARC (12.5%), CommonsenseQA (12.5%), GSM8K (10%), MetaMathQA (12.5%), and SQuAD (10%).
 - **`star`**: A 1B model finetuned using the Self-Taught Reasoner (STaR) hybrid method for one iteration.
+
+### Hyperparameters
+
+All experiments were conducted with consistent hyperparameters to ensure fair comparisons. The only exception was the rationale generation for the STaR model, which used a higher temperature to encourage more diverse reasoning paths.
+
+- **`MIN_NEW_TOKENS`**: 1
+- **`MAX_NEW_TOKENS`**: 256 (128 for STaR rationale generation)
+- **`TEMPERATURE`**: 0.5 (0.7 for STaR rationale generation)
+- **`TOP_P`**: 0.9
+- **`DO_SAMPLE`**: True
+- **`SELF_CONSISTENCY_PATHS`**: 20
+- **`SEED`**: 42
+
+## Methodology
+
+### Answer Extraction
+
+Two distinct methods were used to extract answers depending on the dataset format.
+
+#### Numeric Datasets (GSM8K, DROP)
+
+For datasets requiring a numeric answer, a function called `extract_numeric_answer` was used to parse the model's generated text. This function uses a series of regular expressions to find the final answer, even when it's embedded in complex reasoning steps or calculations. This allows the model to "think step-by-step" and still have its final, precise answer evaluated correctly.
+
+#### Multiple-Choice Datasets (ARC, RACE, MMLU, CommonsenseQA)
+
+For multiple-choice questions, answers were retrieved using **Log-Likelihood**. This method calculates the probability of each possible answer choice and selects the one with the highest likelihood.
+
+While this approach is efficient and consistent—key considerations given limited GPU availability—it has a methodological limitation: it prevents the model from generating a full step-by-step reasoning chain to arrive at its final answer. This may have limited the potential performance boost from reasoning-intensive prompting techniques on these specific datasets.
+
+### Confidence-Weighted Self-Consistency
+
+The Self-Consistency (SC) method used in these experiments was enhanced with a confidence-weighting mechanism. This approach, known as Confidence-Informed Self-Consistency (CISC), was introduced by Taubenfeld et al. in "Confidence Improves Self‑Consistency in LLMs" (arXiv, Feb 10, 2025).
+
+Instead of a simple majority vote over multiple reasoning paths, CISC weighs each answer using the model's own confidence scores. This has two key benefits:
+1.  **Efficiency:** It can achieve better or equivalent results with over 40% fewer reasoning paths, reducing inference costs.
+2.  **Model Introspection:** It leverages the model's ability to assess the quality of its own answers, prioritizing high-confidence responses.
 
 ## Key Findings
 
@@ -55,9 +170,9 @@ When comparing the enhanced 1B models to the simple-prompted Llama 3.2 1B and 3B
 
 Yes, several 1B models were able to outperform the Llama 3.2 3B model (using a simple prompt) on specific benchmarks.
 
-- **`1b-instruct` Model:** Using Chain-of-Thought prompting with self-consistency, this model achieved an impressive **51.8%** on `gsm8k`, far surpassing the 3B model's 12.2%. It also came close to or exceeded the 3B model on `commonsense_qa`.
+- **`1b-sft-mixed-best` Model:** This finetuned model, for which we have full transparency into the training data, stands out. It beat the 3B baseline on `gsm8k` (**15.3%** vs. 12.2%) and `commonsense_qa` (**58.3%** vs. 54.4%). Using a Plan-and-Solve prompt with self-consistency, its `gsm8k` score jumped to an impressive **29.1%**, making it the best-performing model with a transparent training process on this benchmark.
 
-- **`1b-sft-mixed-best` Model:** This finetuned model beat the 3B baseline on `gsm8k` (**15.3%** vs. 12.2%) and `commonsense_qa` (**58.3%** vs. 54.4%). With self-consistency, its `gsm8k` score jumped to **29.1%**.
+- **`1b-instruct` Model:** While Meta's instruction-finetuned model achieved a high score of **51.8%** on `gsm8k` with CoT and self-consistency, the lack of transparency into its training data makes it difficult to draw fair comparisons. It's possible the model was exposed to test-like data during its proprietary finetuning process.
 
 - **`star` Model:** The STaR model also showed significant improvement on `gsm8k`, scoring **10.1%** with a simple prompt. While this is a large jump from the base 1B model's 5.5%, it did not surpass the 3B model's score of 12.2% in this case.
 
@@ -102,11 +217,11 @@ This table shows the single best-performing method for each dataset across all t
 
 | Dataset        | Best Method                 | Accuracy   |
 |----------------|-----------------------------|------------|
-| **GSM8K**      | Cot+SC (1B-INSTRUCT)        | 51.8%      |
+| **GSM8K**      | Plan+SC (1B-SFT-MIXED-BEST) | 29.1%      |
 | **ARC**        | Simple (3B)                 | 62.9%      |
 | **RACE**       | Simple (3B)                 | 68.3%      |
 | **MMLU**       | Simple (3B)                 | 55.7%      |
-| **DROP**       | Simple (3B)                 | 14.3%      |
+| **DROP**       | Role (1B-INSTRUCT)          | 54.7%      |
 | **CommonsenseQA** | Plan+SC (1B-SFT-MIXED-BEST) | 58.7%      |
 
 ### The Impact of Model Size
@@ -117,8 +232,10 @@ Increasing model size from 1B to 3B parameters generally provides a significant 
 |------------|-------------|-------------|---------------|
 | Simple     | 5.5%        | 12.2%       | +6.7pp        |
 | CoT        | 4.9%        | 14.3%       | +9.4pp        |
+| Plan       | 3.2%        | 10.5%       | +7.3pp        |
+| Role       | 2.8%        | 7.0%        | +4.2pp        |
 
-This underscores the challenge: a larger model often sets a high baseline that reasoning techniques on smaller models must overcome.
+This underscores the challenge: a larger model often sets a high baseline that reasoning techniques on smaller models must overcome. The average improvement on `gsm8k` when scaling from 1B to 3B was **6.9 percentage points**.
 
 ### The Effect of Self-Consistency
 
@@ -133,6 +250,10 @@ The average effect of Self-Consistency on the base 1B model was a **+0.9pp** imp
 | **arc**   | Simple     | 39.8%   | 37.8%     | **-2.0pp**  |
 | **mmlu**  | Simple     | 41.0%   | 38.3%     | **-2.7pp**  |
 
+## A Note on Robustness Testing
+
+The original project exposé outlined a plan to evaluate the robustness of each reasoning technique using metrics like the `Semantic Consistency Score` and `Logical Contradiction Rate`. However, due to time constraints and the overall scope of this study project, these specific robustness evaluations could not be implemented. The project instead focused on comprehensive performance evaluation across multiple standard benchmarks.
+
 ## Conclusion: Answering the Research Questions
 
 The results of this project provide clear answers to the initial research questions:
@@ -145,4 +266,4 @@ The results of this project provide clear answers to the initial research questi
 
 4.  **Can techniques be combined?** The success of the `1b-sft-mixed-best` model, which was later enhanced with `cot` prompting, shows that combining finetuning with sophisticated prompting is a powerful strategy.
 
-In conclusion, this study demonstrates that by intelligently applying finetuning and prompting techniques, a small 1B parameter language model can achieve and even surpass the reasoning performance of a model three times its size on specific, complex tasks. The key lies in selecting the right combination of model, method, and data. 
+In conclusion, this study demonstrates that by intelligently applying finetuning and prompting techniques, a small 1B parameter language model can achieve and even surpass the performance of a model three times its size on specific, complex tasks. The key lies in selecting the right combination of model, method, and data.

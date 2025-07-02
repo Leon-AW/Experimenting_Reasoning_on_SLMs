@@ -182,8 +182,16 @@ def main():
 
             for model_size in models_to_run:
                 print(f"\n{'#'*50}\nRunning experiments for model size: {model_size}\n{'#'*50}\n")
+                
+                # We create a temporary args object to pass to configure_hardware,
+                # as the dataset and SC settings change within the loops.
+                # The batch size needs to be determined for the most demanding configuration.
+                temp_args_for_batch_size = argparse.Namespace(**vars(args))
+                temp_args_for_batch_size.self_consistency = True # Assume worst-case for SC
+                temp_args_for_batch_size.dataset = 'drop' # Assume worst-case for dataset length
+
                 # Configure hardware and load model/tokenizer for this model_size
-                device, batch_size, num_gpus, max_memory, usable_gpus_indices = configure_hardware()
+                device, batch_size, num_gpus, max_memory, usable_gpus_indices = configure_hardware(temp_args_for_batch_size)
                 print(f"Detected device: {device}")
                 print(f"Using hyperparameters: BATCH_SIZE={batch_size}, NUM_GPUS={num_gpus}, MAX_MEMORY={max_memory}")
                 
@@ -207,14 +215,28 @@ def main():
                 
                 # Advanced model loading optimizations
                 print(f"Loading model {MODEL_NAME} with optimized settings...")
-                model = AutoModelForCausalLM.from_pretrained(
-                    MODEL_NAME,
-                    torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
-                    device_map="auto",
-                    max_memory=max_memory,
-                    low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
-                    attn_implementation="flash_attention_2" if torch.cuda.is_available() else None,  # Use flash attention if available
-                )
+                
+                # Try to load with flash_attention_2 first, fallback to sdpa if not available
+                try:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        MODEL_NAME,
+                        torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
+                        device_map="auto",
+                        max_memory=max_memory,
+                        low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
+                        attn_implementation="flash_attention_2",  # Try Flash Attention 2 first
+                    )
+                    print("Successfully loaded model with Flash Attention 2")
+                except Exception as e:
+                    print(f"Flash Attention 2 not available ({str(e)}), falling back to SDPA")
+                    model = AutoModelForCausalLM.from_pretrained(
+                        MODEL_NAME,
+                        torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
+                        device_map="auto",
+                        max_memory=max_memory,
+                        low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
+                        attn_implementation="sdpa",  # Fallback to SDPA (Scaled Dot Product Attention)
+                    )
                 
                 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
                 # Optimize tokenizer settings
@@ -307,7 +329,7 @@ def main():
                     print(f"{entry['dataset']:<10} {entry['template']:<12} {entry['model_size']:<12} {str(entry['self_consistency']):<6} {entry['accuracy']*100:<8.2f} {entry['correct']:<8} {entry['total']:<8}")
         else:
             # Normal behavior based on provided CLI options.
-            device, batch_size, num_gpus, max_memory, usable_gpus_indices = configure_hardware()
+            device, batch_size, num_gpus, max_memory, usable_gpus_indices = configure_hardware(args)
             print(f"Detected device: {device}")
             print(f"Using hyperparameters: BATCH_SIZE={batch_size}, NUM_GPUS={num_gpus}, MAX_MEMORY={max_memory}")
 
@@ -331,14 +353,28 @@ def main():
             
             # Advanced model loading optimizations
             print(f"Loading model {MODEL_NAME} with optimized settings...")
-            model = AutoModelForCausalLM.from_pretrained(
-                MODEL_NAME,
-                torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
-                device_map="auto",
-                max_memory=max_memory,
-                low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else None,  # Use flash attention if available
-            )
+            
+            # Try to load with flash_attention_2 first, fallback to sdpa if not available
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_NAME,
+                    torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
+                    device_map="auto",
+                    max_memory=max_memory,
+                    low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
+                    attn_implementation="flash_attention_2",  # Try Flash Attention 2 first
+                )
+                print("Successfully loaded model with Flash Attention 2")
+            except Exception as e:
+                print(f"Flash Attention 2 not available ({str(e)}), falling back to SDPA")
+                model = AutoModelForCausalLM.from_pretrained(
+                    MODEL_NAME,
+                    torch_dtype=torch.bfloat16,  # Use bfloat16 for better performance/accuracy balance
+                    device_map="auto",
+                    max_memory=max_memory,
+                    low_cpu_mem_usage=True,      # Reduce CPU memory usage during loading
+                    attn_implementation="sdpa",  # Fallback to SDPA (Scaled Dot Product Attention)
+                )
             
             tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
             # Optimize tokenizer settings

@@ -11,6 +11,7 @@ from collections import Counter
 import math
 import numpy as np
 import random
+import re
 
 def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_indices):
     """
@@ -115,17 +116,61 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     "do_sample": True,
                     "pad_token_id": pipe.tokenizer.eos_token_id,
                     "num_return_sequences": paths_in_current_batch,
+                    "output_scores": True,
+                    "return_dict_in_generate": True,
                 }
                 
                 try:
                     with torch.no_grad():
-                        outputs = pipe.model.generate(
+                        generation_outputs = pipe.model.generate(
                             **tokenized_inputs,
                             **generation_kwargs
                         )
                         
+                        outputs = generation_outputs.sequences
+                        scores = generation_outputs.scores
+
+                        # Calculate confidence scores from logits
+                        prompt_len = tokenized_inputs['input_ids'].shape[1]
+                        generated_tokens = outputs[:, prompt_len:]
+                        
+                        non_pad_mask = (generated_tokens != pipe.tokenizer.pad_token_id).float()
+                        generated_lengths = non_pad_mask.sum(dim=1)
+
+                        sequence_log_probs = torch.zeros(outputs.shape[0], device=pipe.model.device)
+
+                        # Handle the case where scores length might not match generated tokens
+                        max_gen_len = min(len(scores), generated_tokens.shape[1])
+
+                        for i in range(max_gen_len):
+                            score_t = scores[i]
+                            
+                            # Sanitize scores to prevent NaN/inf issues
+                            safe_scores = torch.nan_to_num(score_t)
+                            log_probs_t = torch.nn.functional.log_softmax(safe_scores, dim=-1)
+                            
+                            token_id = generated_tokens[:, i].unsqueeze(-1)
+                            
+                            # Clamp token_id to be within the vocabulary size to prevent gather errors
+                            vocab_size = log_probs_t.shape[-1]
+                            clamped_token_id = torch.clamp(token_id, 0, vocab_size - 1)
+                            
+                            token_log_prob = torch.gather(log_probs_t, 1, clamped_token_id).squeeze(-1)
+                            
+                            # Ensure we only add log_probs for non-pad tokens
+                            sequence_log_probs += token_log_prob * non_pad_mask[:, i]
+
+                        # Avoid division by zero for sequences with no generated tokens
+                        safe_lengths = torch.max(generated_lengths, torch.ones_like(generated_lengths))
+                        avg_log_probs = sequence_log_probs / safe_lengths
+                        confidences = torch.exp(avg_log_probs)
+
+                        # Replace any remaining NaN confidences with 0
+                        confidences = torch.nan_to_num(confidences, nan=0.0)
+                        
                         for sample_idx, result in enumerate(batch_results):
-                            prompt_len = len(pipe.tokenizer.encode(result["prompt"]))
+                            # Correctly get the prompt text by decoding the input tokens
+                            prompt_text = pipe.tokenizer.decode(tokenized_inputs['input_ids'][sample_idx], skip_special_tokens=True)
                             
                             for path_idx in range(paths_in_current_batch):
                                 output_idx = sample_idx * paths_in_current_batch + path_idx
@@ -135,18 +180,29 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                                     
                                 output_seq = outputs[output_idx]
                                 generated_text = pipe.tokenizer.decode(output_seq, skip_special_tokens=True)
-                                model_response = generated_text[len(result["prompt"]):].strip()
                                 
+                                # Use the decoded prompt text to reliably extract the model's response
+                                if generated_text.startswith(prompt_text):
+                                    model_response = generated_text[len(prompt_text):].strip()
+                                else:
+                                    # Fallback for safety, though should be rare
+                                    model_response = generated_text[len(result["prompt"]):].strip()
+                                
+                                confidence = confidences[output_idx].item()
+
+                                if args.debug and path_idx < 3:  # Only print first few for brevity
+                                    print(f"Debug: sample {result['sample_idx']}, path {path_idx}, confidence: {confidence:.6f}")
+
                                 if args.dataset == "drop":
                                     extracted_answer = extract_drop_answer(model_response)
                                     if extracted_answer is not None:
-                                        result["sc_answers"].append(extracted_answer)
-                                        result["sc_texts"].append(model_response)  # Store the generated text
+                                        result["sc_answers"].append((extracted_answer, confidence))
+                                        result["sc_texts"].append(model_response)
                                 else:
                                     numeric_extracted = extract_numeric_answer(model_response)
                                     if numeric_extracted is not None:
-                                        result["sc_answers"].append(str(int(numeric_extracted)))
-                                        result["sc_texts"].append(model_response)  # Store the generated text
+                                        result["sc_answers"].append((str(int(numeric_extracted)), confidence))
+                                        result["sc_texts"].append(model_response)
                                 
                                 if path_idx == 0 and "generated_text" not in result:
                                     result["generated_text"] = model_response
@@ -157,28 +213,46 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
             
             for result in batch_results:
                 if result["sc_answers"]:
-                    # Standard self-consistency: use most frequent answer
-                    answer_counts = Counter(result["sc_answers"])
-                    pred_answer = answer_counts.most_common(1)[0][0]
+                    # Confidence-weighted self-consistency
+                    answer_confidences = {}
+                    for answer, confidence in result["sc_answers"]:
+                        answer_confidences.setdefault(answer, 0)
+                        answer_confidences[answer] += confidence
+
+                    if args.debug:
+                        print(f"Debug: answer_confidences for sample {result['sample_idx']}: {answer_confidences}")
+
+                    if not answer_confidences:
+                        if args.debug:
+                            print(f"Sample {result['sample_idx']} - No valid answers to weigh.")
+                        continue
+
+                    pred_answer = max(answer_confidences, key=answer_confidences.get)
                     
-                    # Calculate simple confidence as frequency
-                    confidence_value = answer_counts[pred_answer] / len(result["sc_answers"])
+                    total_confidence = sum(answer_confidences.values())
+                    confidence_value = answer_confidences[pred_answer] / total_confidence if total_confidence > 0 else 0
+                    
+                    if args.debug:
+                        print(f"Debug: total_confidence={total_confidence:.6f}, pred_answer_confidence={answer_confidences[pred_answer]:.6f}, final_confidence={confidence_value:.6f}")
                     
                     # For DROP dataset, normalize answers before comparison
                     if args.dataset == "drop" and pred_answer is not None and result["gold_answer"] is not None:
                         # Normalize answers by removing trailing punctuation and normalizing whitespace
-                        normalized_pred = pred_answer.strip().rstrip('.,:;!?').strip()
-                        normalized_gold = result["gold_answer"].strip().rstrip('.,:;!?').strip()
+                        normalized_pred = pred_answer.strip().rstrip('.,:;!?').strip().lower()
+                        normalized_gold = result["gold_answer"].strip().rstrip('.,:;!?').strip().lower()
                         
                         # Check for exact match after normalization
                         is_correct = normalized_pred == normalized_gold
                         
-                        # If not an exact match, check if any word in the predicted answer matches the gold answer
-                        if not is_correct and ' ' in normalized_pred:
-                            # Split the predicted answer into words
-                            pred_words = normalized_pred.split()
-                            # Check if any word in the predicted answer matches the gold answer
-                            is_correct = normalized_gold in pred_words
+                        if not is_correct:
+                            # Try comparing numbers
+                            pred_nums = re.findall(r'[-+]?\d*\.\d+|\d+', normalized_pred)
+                            gold_nums = re.findall(r'[-+]?\d*\.\d+|\d+', normalized_gold)
+                            if pred_nums and gold_nums and pred_nums == gold_nums:
+                                is_correct = True
+                            # Try substring matching
+                            elif normalized_pred in normalized_gold or normalized_gold in normalized_pred:
+                                is_correct = True
                     else:
                         is_correct = pred_answer == result["gold_answer"]
                     
@@ -187,6 +261,8 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                     
                     total += 1
                     
+                    sc_answers_only = [ans for ans, conf in result["sc_answers"]]
+                    sc_confidences = [conf for ans, conf in result["sc_answers"]]
                     # Include all SC paths in results
                     results.append({
                         "sample_index": result["sample_idx"],
@@ -199,14 +275,15 @@ def process_numeric_self_consistency(pipe, dataset, template_name, args, sample_
                         "is_correct": is_correct,
                         "confidence": confidence_value,
                         "sc_paths": [
-                            {"answer": ans, "text": txt} 
-                            for ans, txt in zip(
+                            {"answer": ans, "text": txt, "confidence": conf} 
+                            for (ans, conf), txt in zip(
                                 result["sc_answers"], 
                                 result["sc_texts"]
                             )
                         ],
-                        "sc_answers": result["sc_answers"],
-                        "sc_texts": result["sc_texts"]
+                        "sc_answers": sc_answers_only,
+                        "sc_texts": result["sc_texts"],
+                        "sc_confidences": sc_confidences,
                     })
                     
                     if args.debug:
@@ -344,18 +421,21 @@ def process_numeric_batch(pipe, dataset, template_name, args, batch_size, max_sa
                         # For DROP dataset, normalize answers before comparison
                         if args.dataset == "drop" and pred_answer_str is not None and gold_answer is not None:
                             # Normalize answers by removing trailing punctuation and normalizing whitespace
-                            normalized_pred = pred_answer_str.strip().rstrip('.,:;!?').strip()
-                            normalized_gold = gold_answer.strip().rstrip('.,:;!?').strip()
+                            normalized_pred = pred_answer_str.strip().rstrip('.,:;!?').strip().lower()
+                            normalized_gold = gold_answer.strip().rstrip('.,:;!?').strip().lower()
                             
                             # Check for exact match after normalization
                             is_correct = normalized_pred == normalized_gold
                             
-                            # If not an exact match, check if any word in the predicted answer matches the gold answer
-                            if not is_correct and ' ' in normalized_pred:
-                                # Split the predicted answer into words
-                                pred_words = normalized_pred.split()
-                                # Check if any word in the predicted answer matches the gold answer
-                                is_correct = normalized_gold in pred_words
+                            if not is_correct:
+                                # Try comparing numbers
+                                pred_nums = re.findall(r'[-+]?\d*\.\d+|\d+', normalized_pred)
+                                gold_nums = re.findall(r'[-+]?\d*\.\d+|\d+', normalized_gold)
+                                if pred_nums and gold_nums and pred_nums == gold_nums:
+                                    is_correct = True
+                                # Try substring matching
+                                elif normalized_pred in normalized_gold or normalized_gold in normalized_pred:
+                                    is_correct = True
                         else:
                             is_correct = pred_answer_str == gold_answer
                         

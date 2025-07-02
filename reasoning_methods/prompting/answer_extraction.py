@@ -250,6 +250,15 @@ def extract_drop_answer(generated_text):
     If that fails, it attempts to extract a string answer using various patterns.
     """
     
+    # Pattern to find answers in \boxed{} or \fbox{}
+    box_pattern = re.compile(r"\\boxed{([^}]+)}|\\fbox{([^}]+)}")
+    box_match = box_pattern.search(generated_text)
+    if box_match:
+        # Extract from the first non-empty group
+        answer = next((g for g in box_match.groups() if g is not None), None)
+        if answer:
+            return answer.strip().rstrip('.,:;!?').strip()
+
     # Pattern 1: Look for "The final answer is:" followed by text
     # Extract the entire line after the pattern
     final_answer_pattern = re.compile(
@@ -259,15 +268,17 @@ def extract_drop_answer(generated_text):
     m = final_answer_pattern.search(generated_text)
     if m:
         answer = m.group(1).strip()
-        # Check if the answer starts with a number - if so, don't use this pattern
-        if not re.match(r'^\d', answer):
-            # Clean up the answer (remove quotes, extra spaces, and trailing punctuation)
-            answer = answer.strip('"\'').rstrip('.,:;!?').strip()
-            # Return the full name with potential initials
-            if answer:
-                return answer
+        # Clean up the answer (remove quotes, extra spaces, and trailing punctuation)
+        answer = answer.strip('"\'').rstrip('.,:;!?').strip()
+        if answer:
+            return answer
     
-    # First try to extract a numeric answer
+    # If no specific pattern is found, try taking the first line, if it's not numeric.
+    first_line = generated_text.split('\\n')[0].strip()
+    if first_line and not first_line.replace('.','',1).isdigit():
+        return first_line.rstrip('.,:;!?').strip()
+
+    # Try to extract a numeric answer as a fallback
     numeric_answer = extract_numeric_answer(generated_text)
     if numeric_answer:
         return numeric_answer

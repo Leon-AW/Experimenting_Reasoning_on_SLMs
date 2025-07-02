@@ -1,11 +1,11 @@
-Final Accuracy of simple on drop: 47.00%
-Total Correct Answers: 470/1000 Questions
+Final Accuracy of cot on drop: 45.40%
+Total Correct Answers: 454/1000 Questions
 
 Unextracted Answers: 0 samples
 
 Hyperparameters:
-Model: meta-llama/Llama-3.2-3B
-Batch Size: 204
+Model: meta-llama/Llama-3.2-1B-Instruct
+Batch Size: 51
 Number of GPUs: 3
 Max Memory per GPU: {0: 79456894976, 1: 79456894976, 2: 79456894976, 'cpu': 8000000000}
 Min New Tokens: 1
@@ -15,6 +15,7 @@ Top P: 0.9
 Top K: 0
 Do Sample: True
 Number of Return Sequences: 1
-Self Consistency: False
+Self Consistency: True
+Self Consistency Paths: 20
 Device: cuda
 Random Seed: 42

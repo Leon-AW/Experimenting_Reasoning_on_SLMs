@@ -63,7 +63,7 @@ def load_custom_dataset(dataset_config, max_retries=3):
             time.sleep(5)
 
 
-def configure_hardware():
+def configure_hardware(args=None):
     """
     Dynamically detect available hardware and configure parameters to maximize computational capacity.
     This function now dynamically excludes GPUs with low free memory.
@@ -141,10 +141,22 @@ def configure_hardware():
             buffer_factor = 1.1  # Only 10% buffer needed with A100s
             
             # Further optimize based on environment variables if present
-            if os.environ.get('MODEL_SIZE') == '1b':
+            model_size = os.environ.get('MODEL_SIZE')
+            if model_size == '1b':
                 memory_per_item_gb = 0.5  # 1B model needs even less memory per item
-            elif os.environ.get('MODEL_SIZE') == '3b':
+            elif model_size == '3b':
                 memory_per_item_gb = 1.0  # 3B model needs a bit more
+
+            # Dynamically adjust for memory-intensive tasks
+            if args:
+                if args.self_consistency:
+                    # SC with confidence scoring is very memory heavy
+                    print("Self-consistency enabled, adjusting batch size for higher memory usage.")
+                    memory_per_item_gb *= 4
+                if args.dataset == 'drop':
+                    # DROP dataset has long contexts, requiring more memory
+                    print("DROP dataset detected, adjusting batch size for longer sequences.")
+                    memory_per_item_gb *= 2
         else:
             # Default values for other GPUs
             memory_per_item_gb = 2.0
