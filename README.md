@@ -1,5 +1,9 @@
 # Robustness Testing and Comparing Reasoning Techniques for Small Language Models
 
+## Abstract
+
+This study investigates the effectiveness of reasoning-enhancement techniques on a 1-billion parameter language model, comparing it against a 3B parameter model. We explore three approaches: advanced prompting, multi-stage finetuning, and a hybrid self-improvement method (STaR). Our key findings show that a 1B model can significantly outperform a 3B model on complex tasks like GSM8K when the right techniques are applied. Specifically, a model finetuned on a mix of general and task-specific data (`1b-sft-mixed-best`) combined with Plan-and-Solve prompting and self-consistency achieved very good results. The study concludes that the effectiveness of reasoning techniques is highly dependent on the base model's pre-training and the specific task, but with intelligent application, small models can punch far above their weight.
+
 This repository contains the study project "Robustness Testing and Comparing Reasoning Techniques for Small Language Models". It investigates the effectiveness of different reasoning enhancement techniques on a 1-billion parameter Llama 3.2 model, comparing its performance against a baseline 1B model, and a larger 3B parameter Llama 3.2 model.
 
 ## Project Goal
