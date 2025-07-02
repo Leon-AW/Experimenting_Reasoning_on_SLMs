@@ -212,11 +212,11 @@ The experiments revealed several key insights into how different reasoning strat
 
 Overall, the experiments were successful in demonstrating that reasoning techniques can significantly enhance the performance of a 1B parameter model. However, the effectiveness of each technique varied greatly depending on the base model's initial capabilities and the specific task.
 
-- **Prompting:** Advanced prompting techniques like Chain-of-Thought (`cot`) were often detrimental to the performance of the base 1B model. However, when applied to the `1b-instruct` model, these same techniques yielded substantial improvements, suggesting that a model must first be properly instruction-following for complex prompting to be effective.
+- **Prompting:** Advanced prompting techniques like Chain-of-Thought (`cot`) were often detrimental to the performance of the base 1B model. However, when applied to the `1b-sft-mixed-best` or `1b-instruct` model, these same techniques yielded substantial improvements, suggesting that a model must first be properly finetuned for complex prompting to be effective.
 
 - **Finetuning:** Finetuning on a general instruction dataset like SlimOrca provided only marginal gains. In contrast, the `1b-sft-mixed-best` model, which was finetuned on a mix of general and task-specific data, showed remarkable performance increases across multiple benchmarks.
 
-- **Hybrid Method (STaR):** The `star` model, after only one iteration of self-improvement, showed a massive boost in performance on math reasoning (`gsm8k`), more than doubling the score of the base 1B model. However, its performance on other benchmarks was often lower than the base model, indicating that the reasoning skills learned for one domain did not generalize well without further training.
+- **Hybrid Method (STaR):** The `star` model, after only one iteration of self-improvement, showed a clear boost in performance on math reasoning (`gsm8k`), more than doubling the score of the base 1B model. However, its performance on other benchmarks was often lower than the base model, indicating that the reasoning skills learned for one domain did not generalize well without further training.
 
 ### Comparison to Baselines
 
