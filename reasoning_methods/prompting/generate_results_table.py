@@ -224,11 +224,12 @@ def generate_text_tables(results_data):
     
     # Sort improvement data by dataset
     improvement_df = pd.DataFrame(improvement_data)
-    improvement_df['dataset_rank'] = improvement_df['Dataset'].apply(
-        lambda ds: dataset_order.index(ds) if ds in dataset_order else len(dataset_order)
-    )
-    improvement_df = improvement_df.sort_values(['dataset_rank', 'Template'])
-    improvement_df = improvement_df.drop(columns=['dataset_rank'])
+    if not improvement_df.empty:
+        improvement_df['dataset_rank'] = improvement_df['Dataset'].apply(
+            lambda ds: dataset_order.index(ds) if ds in dataset_order else len(dataset_order)
+        )
+        improvement_df = improvement_df.sort_values(['dataset_rank', 'Template'])
+        improvement_df = improvement_df.drop(columns=['dataset_rank'])
     
     # Add the improvement table
     imp_table = tabulate(improvement_df, headers='keys', tablefmt='grid', showindex=False)
@@ -280,6 +281,59 @@ def generate_text_tables(results_data):
     avg_sc_effect = sum(sc_effects) / len(sc_effects) if sc_effects else 0
     formatted_text.append(f"\nAverage self-consistency effect: {avg_sc_effect:.1f} percentage points\n")
     
+    # Template effect analysis (vs simple)
+    formatted_text.append("## Prompt Template Effect (vs Simple Template)\n")
+    
+    df_simple = df[df['template'] == 'simple'].copy()
+    df_simple.rename(columns={'accuracy': 'simple_accuracy'}, inplace=True)
+    df_simple = df_simple[['dataset', 'model_size', 'self_consistency', 'simple_accuracy']]
+    
+    df_advanced = df[df['template'] != 'simple'].copy()
+    
+    merged_templates = pd.merge(df_advanced, df_simple, on=['dataset', 'model_size', 'self_consistency'])
+    merged_templates['gain'] = merged_templates['accuracy'] - merged_templates['simple_accuracy']
+    
+    avg_template_gain = merged_templates.groupby(['model_size', 'template', 'self_consistency'])['gain'].mean().reset_index()
+    avg_template_gain['method'] = avg_template_gain.apply(lambda row: f"{row['template'].capitalize()}{'+SC' if row['self_consistency'] else ''}", axis=1)
+    
+    # Create a pivot table for template gains
+    template_pivot = avg_template_gain.pivot_table(index='model_size', columns='method', values='gain')
+    
+    # Add the average row at the bottom
+    if not template_pivot.empty:
+        average_row = template_pivot.mean().to_frame().T
+        average_row.index = ['Average']
+        template_pivot = pd.concat([template_pivot, average_row])
+        
+    template_pivot = template_pivot.applymap(lambda x: f"{x:.1f}pp" if pd.notnull(x) else "-")
+    
+    if not template_pivot.empty:
+        template_gain_table = tabulate(template_pivot, headers='keys', tablefmt='grid')
+        formatted_text.append(template_gain_table)
+        formatted_text.append("\n")
+
+    # Finetuning effect analysis (vs base 1B model)
+    formatted_text.append("## Finetuning Effect (vs 1B Base Model)\n")
+    
+    df_base = df[df['model_size'] == '1b'].copy()
+    df_base.rename(columns={'accuracy': 'base_accuracy'}, inplace=True)
+    df_base = df_base[['dataset', 'template', 'self_consistency', 'base_accuracy']]
+    
+    finetuned_models = sorted([m for m in df['model_size'].unique() if m.startswith('1b-') or m == 'star'])
+    df_finetuned = df[df['model_size'].isin(finetuned_models)]
+    
+    merged_finetune = pd.merge(df_finetuned, df_base, on=['dataset', 'template', 'self_consistency'])
+    merged_finetune['gain'] = merged_finetune['accuracy'] - merged_finetune['base_accuracy']
+    
+    avg_finetune_gain = merged_finetune.groupby('model_size')['gain'].mean().reset_index()
+    avg_finetune_gain.rename(columns={'model_size': 'Finetuned Model', 'gain': 'Average Gain vs 1B Base'}, inplace=True)
+    avg_finetune_gain['Average Gain vs 1B Base'] = avg_finetune_gain['Average Gain vs 1B Base'].apply(lambda x: f"{x:.1f}pp")
+
+    if not avg_finetune_gain.empty:
+        finetune_table = tabulate(avg_finetune_gain.sort_values(by='Finetuned Model'), headers='keys', tablefmt='grid', showindex=False)
+        formatted_text.append(finetune_table)
+        formatted_text.append("\n")
+
     # Combine all formatted text
     return "\n".join(formatted_text)
 
@@ -301,6 +355,9 @@ def main():
     
     # Parse results files
     results_data = parse_results_files(results_dir)
+    
+    # Filter out gsm8k_2 results as they are not needed for the final analysis
+    results_data = [row for row in results_data if row.get('dataset') != 'gsm8k_2']
     
     if not results_data:
         print("No results files found or could not parse accuracy information.")

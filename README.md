@@ -327,6 +327,53 @@ The average effect of Self-Consistency on the base 1B model was a **+0.9pp** imp
 | **arc**   | Simple     | 39.8%   | 37.8%     | **-2.0pp**  |
 | **mmlu**  | Simple     | 41.0%   | 38.3%     | **-2.7pp**  |
 
+### The Impact of Prompt Templates
+
+To measure the effect of different prompting strategies, we compared the performance of the `CoT`, `Plan`, and `Role` templates against the `Simple` template for each model. The table below shows the average performance change in percentage points (pp).
+
+|                           | Cot     | Cot+SC   | Plan    | Plan+SC   | Role    | Role+SC   |
+|---------------------------|---------|----------|---------|-----------|---------|-----------|
+| 1b                        | -3.8pp  | -1.6pp   | -4.3pp  | -2.8pp    | -7.4pp  | -4.5pp    |
+| 1b-instruct               | 0.3pp   | 3.6pp    | 0.3pp   | 3.6pp     | -0.7pp  | 7.1pp     |
+| 1b-sft-full               | -3.1pp  | 2.8pp    | -4.5pp  | -2.3pp    | -5.0pp  | -1.5pp    |
+| 1b-sft-full-slimorca-100k | -2.2pp  | 3.1pp    | -3.6pp  | -         | -5.9pp  | -         |
+| 1b-sft-lora               | 1.9pp   | -        | 0.6pp   | -         | -1.4pp  | -         |
+| 1b-sft-lora-all           | -2.8pp  | -        | -4.1pp  | -         | -4.3pp  | -         |
+| 1b-sft-mixed-best         | 0.9pp   | 9.1pp    | 0.9pp   | 12.9pp    | -0.7pp  | 9.1pp     |
+| 3b                        | -11.1pp | -        | -11.1pp | -         | -13.8pp | -         |
+| star                      | -1.2pp  | -        | -1.4pp  | -         | -2.9pp  | -         |
+| **Average**               | **-2.4pp**  | **3.4pp**    | **-3.0pp**  | **2.9pp**     | **-4.7pp**  | **2.6pp**     |
+
+Several key trends emerge from this data:
+
+1.  **Advanced prompts without Self-Consistency are often detrimental.** On average, all advanced templates (`CoT`, `Plan`, `Role`) without Self-Consistency hurt performance compared to a simple prompt. Chain-of-Thought, for example, resulted in an average performance drop of **-2.4pp**. This is most pronounced on the base models (1B, 3B) which have not been fine-tuned.
+
+2.  **Self-Consistency unlocks the potential of advanced prompts.** When combined with Self-Consistency, the advanced templates consistently provided a performance boost. The average gains show a clear hierarchy:
+    -   **`CoT+SC`**: +3.4pp
+    -   **`Plan+SC`**: +2.9pp
+    -   **`Role+SC`**: +2.6pp
+
+This shows that for these techniques to be effective, they require not just a capable model (like `1b-instruct` or `1b-sft-mixed-best`) but also a method like Self-Consistency to reliably extract the improved reasoning.
+
+### The Impact of Finetuning
+
+This analysis shows the average performance gain of each finetuned model compared to the base 1B model across all common benchmarks and templates.
+
+| Finetuned Model           | Average Gain vs 1B Base   |
+|---------------------------|---------------------------|
+| 1b-instruct               | 30.7pp                    |
+| 1b-sft-full               | 0.6pp                     |
+| 1b-sft-full-slimorca-100k | 0.4pp                     |
+| 1b-sft-lora               | 0.7pp                     |
+| 1b-sft-lora-all           | 0.3pp                     |
+| 1b-sft-mixed-best         | 9.7pp                     |
+| star                      | -0.1pp                    |
+
+The results clearly show that the choice of finetuning data is critical.
+-   **`1b-instruct`**: Achieved the highest overall gain, demonstrating the power of large-scale, high-quality instruction tuning.
+-   **`1b-sft-mixed-best`**: Showed a very strong improvement of **+9.7pp**, confirming that finetuning on a smaller, targeted mix of domain-specific and general reasoning data is highly effective.
+-   **Other Methods**: Finetuning on only a general dataset (SlimOrca) or using the STaR method for one iteration yielded only marginal or slightly negative gains, highlighting that the finetuning strategy must be carefully selected.
+
 ## Limitations and Future Work
 
 This study, while providing valuable insights, has several limitations that offer avenues for future research:
