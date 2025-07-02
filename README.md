@@ -128,7 +128,7 @@ Two distinct methods were used to extract answers depending on the dataset forma
 
 #### Numeric Datasets (GSM8K, DROP)
 
-For datasets requiring a numeric answer, a function called `extract_numeric_answer` was used to parse the model's generated text. This function uses a series of regular expressions to find the final answer, even when it's embedded in complex reasoning steps or calculations. This allows the model to "think step-by-step" and still have its final, precise answer evaluated correctly.
+For datasets requiring a numeric answer, two specialized functions were used. For `gsm8k`, a function called `extract_numeric_answer` was used to parse the model's generated text, while for `drop` the `extract_drop_answer` function was used. Both functions use a series of regular expressions to find the final answer, even when it's embedded in complex reasoning steps or calculations. This allows the model to "think step-by-step" and still have its final, precise answer evaluated correctly.
 
 #### Multiple-Choice Datasets (ARC, RACE, MMLU, CommonsenseQA)
 
@@ -143,6 +143,66 @@ The Self-Consistency (SC) method used in these experiments was enhanced with a c
 Instead of a simple majority vote over multiple reasoning paths, CISC weighs each answer using the model's own confidence scores. This has two key benefits:
 1.  **Efficiency:** It can achieve better or equivalent results with over 40% fewer reasoning paths, reducing inference costs.
 2.  **Model Introspection:** It leverages the model's ability to assess the quality of its own answers, prioritizing high-confidence responses.
+
+## Reproducing the Experiments
+
+Each of the three core methodologies has its own dedicated directory and a detailed `README` with specific instructions for running the code. Below is a summary of how to reproduce the experiments for each approach.
+
+### 1. Prompting
+
+The prompting experiments are designed to be run in a comprehensive "sweep" mode, which evaluates all configured models, datasets, and templates automatically.
+
+-   **Detailed Documentation:** [`reasoning_methods/prompting/README_PROMPTING.md`](reasoning_methods/prompting/README_PROMPTING.md)
+-   **Main Script:** `reasoning_methods/prompting/main.py`
+
+To run a full evaluation sweep across all configured settings, execute the main script as a module:
+```bash
+python -m reasoning_methods.prompting.main
+```
+To run a specific experiment, you can use command-line arguments:
+```bash
+# Evaluate GSM8K with the 1B model using the 'cot' template
+python -m reasoning_methods.prompting.main --dataset gsm8k --model_size 1b --template cot
+```
+Results and debug logs are saved to the `reasoning_methods/prompting/results/` and `reasoning_methods/prompting/debug_csvs/` directories, respectively.
+
+### 2. Multi-Stage Finetuning (Orca-Style)
+
+This approach involves a two-step process: creating a specialized dataset and then fine-tuning the model on it.
+
+-   **Detailed Documentation:** [`reasoning_methods/fine-tuning/README_FINETUNING.md`](reasoning_methods/fine-tuning/README_FINETUNING.md)
+
+**Step 1: Create the Dataset**
+The script processes and combines several datasets, applying the "prompt erasure" technique to create a training set.
+```bash
+python reasoning_methods/fine-tuning/create_mixed_dataset.py
+```
+This saves the dataset to `reasoning_methods/fine-tuning/mixed_finetuning_dataset`.
+
+**Step 2: Run Supervised Fine-Tuning (SFT)**
+Use the `sft.py` script to fine-tune a base model on the newly created dataset.
+```bash
+python reasoning_methods/fine-tuning/sft.py \
+    --model_name_or_path "meta-llama/Llama-3.2-1B" \
+    --dataset_name "reasoning_methods/fine-tuning/mixed_finetuning_dataset" \
+    --output_dir "./models/1b-sft-mixed-best" \
+    --learning_rate 2e-5 \
+    --num_train_epochs 3
+```
+
+### 3. Hybrid Method (STaR)
+
+The Self-Taught Reasoner (STaR) implementation is modular and follows the algorithm from the original paper. It iteratively collects rationales and fine-tunes the model.
+
+-   **Detailed Documentation:** [`reasoning_methods/hybrid/README_HYBRID.md`](reasoning_methods/hybrid/README_HYBRID.md)
+-   **Main Script:** `reasoning_methods/hybrid/star_main.py`
+
+To run the full STaR process with automatic iterations for a specific dataset:
+```bash
+# Run 3 iterations of STaR on the GSM8K dataset
+python reasoning_methods/hybrid/star_main.py --dataset gsm8k --num_iterations 3
+```
+The implementation also allows for running each phase (rationale collection, fine-tuning, evaluation) independently. Generated rationales are saved in `reasoning_methods/hybrid/collected_rationales/` and the fine-tuned models are saved in `reasoning_methods/hybrid/star_models/`.
 
 ## Key Findings
 
@@ -162,7 +222,7 @@ Overall, the experiments were successful in demonstrating that reasoning techniq
 
 When comparing the enhanced 1B models to the simple-prompted Llama 3.2 1B and 3B models, we found:
 
-- All specialized 1B models significantly outperformed the **base 1B model** on their respective strong suits. For example, `1b-instruct` excelled in general reasoning, `1b-sft-mixed-best` was a strong all-rounder, and `star` dominated mathematical reasoning.
+- All specialized 1B models significantly outperformed the **base 1B model** on their respective strong suits. For example, `1b-instruct` excelled in general reasoning, `1b-sft-mixed-best` was a strong all-rounder, and `star` showed improvements for mathematical reasoning.
 
 - The ultimate goal was to see if a 1B model could match the **3B model**. Our results show this is indeed possible, but it requires the right approach.
 
@@ -250,9 +310,19 @@ The average effect of Self-Consistency on the base 1B model was a **+0.9pp** imp
 | **arc**   | Simple     | 39.8%   | 37.8%     | **-2.0pp**  |
 | **mmlu**  | Simple     | 41.0%   | 38.3%     | **-2.7pp**  |
 
-## A Note on Robustness Testing
+## Limitations and Future Work
 
-The original project exposé outlined a plan to evaluate the robustness of each reasoning technique using metrics like the `Semantic Consistency Score` and `Logical Contradiction Rate`. However, due to time constraints and the overall scope of this study project, these specific robustness evaluations could not be implemented. The project instead focused on comprehensive performance evaluation across multiple standard benchmarks.
+This study, while providing valuable insights, has several limitations that offer avenues for future research:
+
+-   **Incomplete Robustness Testing:** The original plan included a comprehensive evaluation of robustness using metrics like `Semantic Consistency Score` and `Logical Contradiction Rate`. Due to time constraints, this analysis could not be completed. Future work should implement these metrics to provide a more rigorous assessment of how well these reasoning techniques hold up under adversarial or out-of-distribution inputs.
+
+-   **Methodology for Multiple-Choice Tasks:** The use of log-likelihood for multiple-choice questions was an efficient method for answer extraction given resource constraints. However, this approach has a significant methodological drawback: it prevents the model from generating a full reasoning chain (Chain-of-Thought) before selecting an answer. This likely limited the potential performance gains from advanced prompting techniques on benchmarks like ARC, RACE, and MMLU. Future experiments should explore methods that allow for full rationale generation on these tasks.
+
+-   **Limited Generalization of STaR:** The Self-Taught Reasoner (`star`) model showed promising results on `gsm8k` after just one iteration of finetuning. However, its performance did not generalize well to other domains, and in some cases, was worse than the base model. This suggests that the reasoning skills learned were highly task-specific. Future work could explore multiple iterations of the STaR method and finetuning on a more diverse set of rationales to improve generalization.
+
+-   **Transparency of Pre-trained Models:** The `1b-instruct` model from Meta performed exceptionally well, but it is effectively a "black box." The lack of transparency into its finetuning dataset makes it difficult to draw definitive conclusions or fair comparisons. It is possible the model was exposed to data similar to the evaluation benchmarks, which would inflate its performance.
+
+-   **Resource Constraints:** The scope of this project was constrained by time and GPU availability. This limited the number of self-consistency paths, the number of STaR iterations, and the overall breadth of experimentation. More extensive hyperparameter tuning and longer training runs could yield further improvements.
 
 ## Conclusion: Answering the Research Questions
 
