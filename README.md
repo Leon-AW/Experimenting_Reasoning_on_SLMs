@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This study investigates the effectiveness of reasoning-enhancement techniques on a 1-billion parameter language model, comparing it against a 3B parameter model. We explore three approaches: advanced prompting, multi-stage finetuning, and a hybrid self-improvement method (STaR). Our key findings show that a 1B model can significantly outperform a 3B model on complex tasks like GSM8K when the right techniques are applied. Specifically, a model finetuned on a mix of general and task-specific data (`1b-sft-mixed-best`) combined with Plan-and-Solve prompting and self-consistency achieved very good results. The study concludes that the effectiveness of reasoning techniques is highly dependent on the base model's pre-training and the specific task, but with intelligent application, small models can punch far above their weight.
+This study investigates the effectiveness of reasoning-enhancement techniques on a 1-billion parameter language model, comparing it against a 3B parameter model. We explore three approaches: advanced prompting, multi-stage finetuning, and a hybrid self-improvement method (STaR). Our key findings show that a 1B model can significantly outperform a 3B model on complex tasks like GSM8K when the right techniques are applied. Specifically, a model finetuned on a mix of general and task-specific data (`1b-sft-mixed-best`) combined with Plan-and-Solve prompting and self-consistency achieved very good results. The study concludes that the effectiveness of reasoning techniques is highly dependent on the base model's pre-training and the specific task.
 
 This repository contains the study project "Robustness Testing and Comparing Reasoning Techniques for Small Language Models". It investigates the effectiveness of different reasoning enhancement techniques on a 1-billion parameter Llama 3.2 model, comparing its performance against a baseline 1B model, and a larger 3B parameter Llama 3.2 model.
 
@@ -342,6 +342,11 @@ This study, while providing valuable insights, has several limitations that offe
 -   **Transparency of Pre-trained Models:** The `1b-instruct` model from Meta performed exceptionally well, but it is effectively a "black box." The lack of transparency into its finetuning dataset makes it difficult to draw definitive conclusions or fair comparisons. It is possible the model was exposed to data similar to the evaluation benchmarks, which would inflate its performance.
 
 -   **Resource Constraints:** The scope of this project was constrained by time and GPU availability. This limited the number of self-consistency paths, the number of STaR iterations, and the overall breadth of experimentation. More extensive hyperparameter tuning and longer training runs could yield further improvements.
+
+-   **Availability of Finetuned Models:** Due to GitHub's file size limits (>2GB), several of the largest finetuned model checkpoints could not be included in this repository. While the scripts to reproduce them are provided, the final trained models are not directly available for download. The missing files include:
+    -   `reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Mixed-Reasoning/model.safetensors`
+    -   `reasoning_methods/fine-tuning/Llama-3.2-1B-SFT-Mixed-Reasoning/checkpoint-2000/model.safetensors`
+    -   `reasoning_methods/hybrid/star_models/star_model1/final_model/model.safetensors`
 
 ## Conclusion: Answering the Research Questions
 
