@@ -407,4 +407,6 @@ The results of this project provide clear answers to the initial research questi
 
 4.  **Can techniques be combined?** The success of the `1b-sft-mixed-best` model, which was later enhanced with `cot` prompting, shows that combining finetuning with sophisticated prompting is a powerful strategy.
 
+5.  **How do prompting and self-consistency interact?** Our results reveal a crucial synergy. Advanced prompting techniques like Chain-of-Thought, when used alone, often degraded performance compared to a simple prompt. However, when combined with self-consistency, they consistently provided significant performance boosts. This suggests that advanced prompts are effective at generating a diverse set of reasoning paths, but a method like self-consistency is required to reliably identify and select the correct one.
+
 In conclusion, this study demonstrates that by intelligently applying finetuning and prompting techniques, a small 1B parameter language model can achieve and even surpass the performance of a model three times its size on specific, complex tasks. The key lies in selecting the right combination of model, method, and data.
