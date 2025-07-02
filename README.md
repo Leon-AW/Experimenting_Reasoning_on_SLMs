@@ -152,6 +152,19 @@ Instead of a simple majority vote over multiple reasoning paths, CISC weighs eac
 
 Each of the three core methodologies has its own dedicated directory and a detailed `README` with specific instructions for running the code. Below is a summary of how to reproduce the experiments for each approach.
 
+## Requirements
+
+ ```bash
+   #!/bin/bash
+
+   # Create and activate environment
+   conda create --name study_project_env python=3.10 -y
+   conda activate study_project_env
+
+   # Install requirements
+   pip install -r requirements.txt
+   ```
+
 ### 1. Prompting
 
 The prompting experiments are designed to be run in a comprehensive "sweep" mode, which evaluates all configured models, datasets, and templates automatically.
