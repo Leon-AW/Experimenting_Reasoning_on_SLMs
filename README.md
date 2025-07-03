@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This study investigates the effectiveness of reasoning-enhancement techniques on a 1-billion parameter language model, comparing it against a 3B parameter model. We explore three approaches: advanced prompting, multi-stage finetuning, and a hybrid self-improvement method (STaR). Our key findings show that a 1B model can significantly outperform a 3B model on complex tasks like GSM8K when the right techniques are applied. Specifically, a model finetuned on a mix of general and task-specific data (`1b-sft-mixed-best`) combined with Plan-and-Solve prompting and self-consistency achieved very good results. The study concludes that the effectiveness of reasoning techniques is highly dependent on the base model's pre-training and the specific task.
+This study investigates the effectiveness of reasoning-enhancement techniques on a 1-billion parameter language model, comparing it against a 3B parameter model. We explore three approaches: Prompting, finetuning, and a hybrid self-improvement method (STaR). Our key findings show that a 1B model can significantly outperform a 3B model on complex tasks like GSM8K when the right techniques are applied. Specifically, a model finetuned on a mix of general and task-specific data (`1b-sft-mixed-best`) combined with Plan-and-Solve prompting and self-consistency achieved very good results. The study concludes that the effectiveness of reasoning techniques is highly dependent on the base model's pre-training and the specific task.
 
 This repository contains the study project "Robustness Testing and Comparing Reasoning Techniques for Small Language Models". It investigates the effectiveness of different reasoning enhancement techniques on a 1-billion parameter Llama 3.2 model, comparing its performance against a baseline 1B model, and a larger 3B parameter Llama 3.2 model.
 
@@ -11,11 +11,11 @@ This repository contains the study project "Robustness Testing and Comparing Rea
 The primary goal of this project was to explore and evaluate methods to improve the reasoning capabilities of Small Language Models (SLMs). As described in the project exposé, we investigated three distinct approaches:
 
 1.  **Prompting:** Utilizing techniques like Chain-of-Thought (CoT) and Self-Consistency on pre-trained models without further finetuning.
-2.  **Multi-Stage Finetuning:** Finetuning the base model on various reasoning datasets, inspired by the Orca 2 paper.
+2.  **Multi-Stage Finetuning:** Finetuning the base model on various reasoning datasets, inspired by the Orca 2 paper with prompt erasure.
 3.  **Hybrid Method (STaR):** A hybrid approach combining finetuning and prompting, where the model is finetuned on its own generated reasoning steps (rationales).
 
 The core research questions were:
-- Can reasoning techniques substantially improve the performance of a 1B model?
+- Can reasoning techniques substantially improve the zero-shot performance of a 1B model?
 - Are these improvements sufficient to match or exceed the performance of a larger 3B model?
 - Which approaches are most effective?
 
@@ -40,6 +40,8 @@ The following prompt templates were used to guide the model's reasoning process.
     ```
 
 ### Chain-of-Thought (CoT)
+
+*(Inspired by: "Large Language Models are Zero-Shot Reasoners" by Kojima et al. (2022))* 
 *   **Numeric:**
     ```
     Problem: {question}
@@ -59,6 +61,8 @@ The following prompt templates were used to guide the model's reasoning process.
     ```
 
 ### Role-Setting Prompt
+
+*(Inspired by: "Better Zero-Shot Reasoning with Role-Play Prompting" by Kong et al. (2024))* 
 *   **Numeric:**
     ```
     User: From now on, you are an excellent math teacher and always teach your students math problems correctly. And I am one of your students.
@@ -77,6 +81,8 @@ The following prompt templates were used to guide the model's reasoning process.
     ```
 
 ### Plan-and-Solve Prompt
+
+*(Inspired by: "Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models" by Wang et al. (2023))* 
 *   **Numeric:**
     ```
     Problem: {question}
@@ -190,7 +196,7 @@ This approach involves a two-step process: creating a specialized dataset and th
 -   **Detailed Documentation:** [`reasoning_methods/fine-tuning/README_FINETUNING.md`](reasoning_methods/fine-tuning/README_FINETUNING.md)
 
 **Step 1: Create the Dataset**
-The script processes and combines several datasets, applying the "prompt erasure" technique to create a training set.
+The script processes and combines several datasets, applying the "prompt erasure" technique (basically by just leaving out the system prompt of the dataset) to create a training set. For example, a system prompt like `{"from": "system", "value": "You are an AI assistant. You will be given a task. You must generate a detailed and long answer."}` from the SlimOrca-Dedup dataset is omitted from the training data. This allows the model to learn to generate long and detailed answers without explicitly being instructed to do so.
 ```bash
 python reasoning_methods/fine-tuning/create_mixed_dataset.py
 ```
@@ -229,7 +235,7 @@ The experiments revealed several key insights into how different reasoning strat
 
 Overall, the experiments were successful in demonstrating that reasoning techniques can significantly enhance the performance of a 1B parameter model. However, the effectiveness of each technique varied greatly depending on the base model's initial capabilities and the specific task.
 
-- **Prompting:** Advanced prompting techniques like Chain-of-Thought (`cot`) were often detrimental to the performance of the base 1B model. However, when applied to the `1b-sft-mixed-best` or `1b-instruct` model, these same techniques yielded substantial improvements, suggesting that a model must first be properly finetuned for complex prompting to be effective.
+- **Prompting:** Prompting techniques like Chain-of-Thought (`cot`) were often detrimental to the performance of the base 1B model. However, when applied to the `1b-sft-mixed-best` or `1b-instruct` model, these same techniques yielded substantial improvements, suggesting that a model must first be properly finetuned for complex prompting to be effective.
 
 - **Finetuning:** Finetuning on a general instruction dataset like SlimOrca provided only marginal gains. In contrast, the `1b-sft-mixed-best` model, which was finetuned on a mix of general and task-specific data, showed remarkable performance increases across multiple benchmarks.
 
@@ -346,9 +352,9 @@ To measure the effect of different prompting strategies, we compared the perform
 
 Several key trends emerge from this data:
 
-1.  **Advanced prompts without Self-Consistency are often detrimental.** On average, all advanced templates (`CoT`, `Plan`, `Role`) without Self-Consistency hurt performance compared to a simple prompt. Chain-of-Thought, for example, resulted in an average performance drop of **-2.4pp**. This is most pronounced on the base models (1B, 3B) which have not been fine-tuned.
+1.  **Prompts without Self-Consistency are often detrimental.** On average, all templates (`CoT`, `Plan`, `Role`) without Self-Consistency hurt performance compared to a simple prompt. Chain-of-Thought, for example, resulted in an average performance drop of **-2.4pp**. This is most pronounced on the base models (1B, 3B) which have not been fine-tuned.
 
-2.  **Self-Consistency unlocks the potential of advanced prompts.** When combined with Self-Consistency, the advanced templates consistently provided a performance boost. The average gains show a clear hierarchy:
+2.  **Self-Consistency unlocks the potential of reasoning prompts.** When combined with Self-Consistency, the templates consistently provided a performance boost. The average gains show a clear hierarchy:
     -   **`CoT+SC`**: +3.4pp
     -   **`Plan+SC`**: +2.9pp
     -   **`Role+SC`**: +2.6pp
@@ -380,7 +386,7 @@ This study, while providing valuable insights, has several limitations that offe
 
 -   **Incomplete Robustness Testing:** The original plan included a comprehensive evaluation of robustness using metrics like `Semantic Consistency Score` and `Logical Contradiction Rate`. Due to time constraints, this analysis could not be completed. Future work should implement these metrics to provide a more rigorous assessment of how well these reasoning techniques hold up under adversarial or out-of-distribution inputs.
 
--   **Methodology for Multiple-Choice Tasks:** The use of log-likelihood for multiple-choice questions was an efficient method for answer extraction given resource constraints. However, this approach has a significant methodological drawback: it prevents the model from generating a full reasoning chain (Chain-of-Thought) before selecting an answer. This likely limited the potential performance gains from advanced prompting techniques on benchmarks like ARC, RACE, and MMLU. Future experiments should explore methods that allow for full rationale generation on these tasks.
+-   **Methodology for Multiple-Choice Tasks:** The use of log-likelihood for multiple-choice questions was an efficient method for answer extraction given resource constraints. However, this approach has a significant methodological drawback: it prevents the model from generating a full reasoning chain (Chain-of-Thought) before selecting an answer. This likely limited the potential performance gains from prompting techniques on benchmarks like ARC, RACE, and MMLU. Future experiments should explore methods that allow for full rationale generation on these tasks.
 
 -   **Limited Generalization of STaR:** The Self-Taught Reasoner (`star`) model showed promising results on `gsm8k` after just one iteration of finetuning. However, its performance did not generalize well to other domains, and in some cases, was worse than the base model. This suggests that the reasoning skills learned were highly task-specific. The original STaR paper performed several iterations of this process; due to computational and time constraints, this study was limited to a single iteration. Future work could explore multiple iterations of the STaR method and finetuning on a more diverse set of rationales to improve generalization.
 
@@ -407,6 +413,6 @@ The results of this project provide clear answers to the initial research questi
 
 4.  **Can techniques be combined?** The success of the `1b-sft-mixed-best` model, which was later enhanced with `cot` prompting, shows that combining finetuning with sophisticated prompting is a powerful strategy.
 
-5.  **How do prompting and self-consistency interact?** Our results reveal a crucial synergy. Advanced prompting techniques like Chain-of-Thought, when used alone, often degraded performance compared to a simple prompt. However, when combined with self-consistency, they consistently provided significant performance boosts. This suggests that advanced prompts are effective at generating a diverse set of reasoning paths, but a method like self-consistency is required to reliably identify and select the correct one.
+5.  **How do prompting and self-consistency interact?** Our results reveal a crucial synergy. Prompting techniques like Chain-of-Thought, when used alone, often degraded performance compared to a simple prompt. However, when combined with self-consistency, they consistently provided significant performance boosts. This suggests that these prompts are effective at generating a diverse set of reasoning paths, but a method like self-consistency is required to reliably identify and select the correct one.
 
 In conclusion, this study demonstrates that by intelligently applying finetuning and prompting techniques, a small 1B parameter language model can achieve and even surpass the performance of a model three times its size on specific, complex tasks. The key lies in selecting the right combination of model, method, and data.
